@@ -1,0 +1,11 @@
+@react-navigation/native
+@react-navigation/stack
+react-native-maps
+expo-location
+firebase
+expo-speech
+react-native-reanimated
+react-native-screens
+react-native-safe-area-context
+react-native-gesture-handler
+@react-native-masked-view/masked-view

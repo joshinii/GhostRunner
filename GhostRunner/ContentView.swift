@@ -13,7 +13,10 @@ struct ContentView: View {
             Image(systemName: "globe")
                 .imageScale(.large)
                 .foregroundStyle(.tint)
-            Text("Hello, world!")
+            Text("Native iOS shell")
+            Text("Run the Expo app to load React screens.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
         .padding()
     }

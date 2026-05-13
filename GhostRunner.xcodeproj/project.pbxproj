@@ -45,6 +45,11 @@
 			path = GhostRunnerUITests;
 			sourceTree = "<group>";
 		};
+		096FEE682FAC1DC400AA5F41 /* services */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = services;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +80,7 @@
 		096FEE322FAC124100AA5F41 = {
 			isa = PBXGroup;
 			children = (
+				096FEE682FAC1DC400AA5F41 /* services */,
 				096FEE3D2FAC124100AA5F41 /* GhostRunner */,
 				096FEE4B2FAC124400AA5F41 /* GhostRunnerTests */,
 				096FEE552FAC124400AA5F41 /* GhostRunnerUITests */,
@@ -109,6 +115,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				096FEE3D2FAC124100AA5F41 /* GhostRunner */,
+				096FEE682FAC1DC400AA5F41 /* services */,
 			);
 			name = GhostRunner;
 			packageProductDependencies = (
