@@ -22,14 +22,16 @@ import MapView, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import CoachingCard from "../components/CoachingCard";
-import { useMockHeartRate } from "../hooks/useMockHeartRate";
-import { RootStackParamList } from "../navigation/types";
 import {
   BIO_GUARD_CONFIG,
   COACHING_CONFIG,
+  DEMO_USER_PROFILE,
   GPS_CONFIG,
-  ROUTE_DRAW_CONFIG
+  ROUTE_DRAW_CONFIG,
+  TRAINING_GOALS
 } from "../constants/config";
+import { useMockHeartRate } from "../hooks/useMockHeartRate";
+import { RootStackParamList } from "../navigation/types";
 import {
   CoachingInstruction,
   getCoachingInstruction
@@ -39,8 +41,26 @@ import {
   requestLocationPermission,
   startWatchingLocation
 } from "../services/location";
+import {
+  CoachingEvent,
+  RaceResultSummary,
+  saveRaceResult
+} from "../services/sessions";
+import {
+  estimateTimeGapSeconds,
+  getHeartRateZone,
+  predictFinishTimeMs
+} from "../utils/agentTools";
 import { getDistanceMeters } from "../utils/geo";
 import { ghostPosition, GhostPosition } from "../utils/ghostEngine";
+import {
+  getPointNearElapsed,
+  getUpcomingElevationDelta
+} from "../utils/raceAnalytics";
+import {
+  formatPace,
+  formatSessionDuration
+} from "../utils/sessionFormat";
 import { TYPOGRAPHY } from "../theme";
 
 const COUNTDOWN_START = 3;
@@ -50,36 +70,21 @@ const HUD_INTERVAL_MS = 1000;
 const COACHING_CARD_BOTTOM_SPACING = 12;
 
 type RaceRoute = RouteProp<RootStackParamList, "RaceScreen">;
+
 type HudState = {
+  elevationAhead: number;
   elapsedMs: number;
   gapMeters: number | null;
+  heartRateZone: string;
   pace: number | null;
+  projectedFinishMs: number;
+  timeGapSeconds: number;
   totalDistance: number;
 };
-type RaceResult = {
-  userTimeMs: number;
+
+type RaceResult = RaceResultSummary & {
   ghostTimeMs: number;
-  finalGapMeters: number | null;
-  averagePace: number | null;
 };
-
-function formatElapsed(elapsedMs: number): string {
-  const totalSeconds = Math.floor(elapsedMs / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-
-  return `${minutes.toString().padStart(2, "0")}:${seconds
-    .toString()
-    .padStart(2, "0")}`;
-}
-
-function formatPace(pace: number | null): string {
-  if (pace === null) {
-    return "--";
-  }
-
-  return `${pace.toFixed(1)} min/km`;
-}
 
 function formatGap(gapMeters: number | null): string {
   if (gapMeters === null) {
@@ -115,38 +120,50 @@ function getAveragePace(elapsedMs: number, distanceMeters: number): number | nul
   return elapsedMs / 60000 / (distanceMeters / 1000);
 }
 
+function getTargetPace(sessionMode: "run" | "ride"): number {
+  return sessionMode === "ride"
+    ? TRAINING_GOALS.rideTargetPaceMinPerKm
+    : TRAINING_GOALS.runTargetPaceMinPerKm;
+}
+
 export default function RaceScreen() {
   const navigation = useNavigation<StackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const { params } = useRoute<RaceRoute>();
   const { session } = params;
+  const isDemoRace = session.source === "demo";
   const animationFrameRef = useRef<number | null>(null);
-  const bioGuardCoachingRequestedRef = useRef(false);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const currentPaceRef = useRef<number | null>(null);
+  const currentPaceRef = useRef<number | null>(session.summary.averagePace);
+  const ghostPausedRef = useRef(false);
   const ghostRef = useRef<GhostPosition | null>(null);
   const ghostElapsedRef = useRef(0);
-  const hudIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const raceEndedRef = useRef(false);
-  const ghostPausedRef = useRef(false);
   const lastCoachingCallRef = useRef(0);
   const lastGhostFrameAtRef = useRef<number | null>(null);
   const lastUserPointRef = useRef<(Coord & { timestamp: number }) | null>(null);
   const mapRef = useRef<MapView>(null);
   const raceActiveRef = useRef(false);
+  const raceEndedRef = useRef(false);
   const raceStartRef = useRef<number | null>(null);
   const renderTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const routeDrawIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hudIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const simulatedHRRef = useRef(155);
   const totalDistanceRef = useRef(0);
   const userCoordRef = useRef<Coord | null>(null);
+  const coachingEventsRef = useRef<CoachingEvent[]>([]);
+  const [coachingEvents, setCoachingEvents] = useState<CoachingEvent[]>([]);
   const [countdown, setCountdown] = useState(COUNTDOWN_START);
-  const [ghostMarkerTick, setGhostMarkerTick] = useState(0);
   const [drawnRouteCount, setDrawnRouteCount] = useState(0);
+  const [ghostMarkerTick, setGhostMarkerTick] = useState(0);
   const [hud, setHud] = useState<HudState>({
+    elevationAhead: 0,
     elapsedMs: 0,
     gapMeters: null,
-    pace: null,
+    heartRateZone: "easy",
+    pace: session.summary.averagePace,
+    projectedFinishMs: session.duration,
+    timeGapSeconds: 0,
     totalDistance: 0
   });
   const [isBioGuardPaused, setIsBioGuardPaused] = useState(false);
@@ -163,24 +180,10 @@ export default function RaceScreen() {
   });
   const points = session.points;
 
-  console.log("[GhostStrategist] RaceScreen rendering", {
-    countdown,
-    bpm,
-    gapMeters: hud.gapMeters,
-    hasGhost: ghostRef.current !== null,
-    hasUserCoord: userCoord !== null,
-    isSessionLoading,
-    isBioGuardPaused,
-    isRacing,
-    latestCoaching,
-    pointCount: points.length,
-    raceEnded: raceEndedRef.current,
-    sessionId: session.id
-  });
-
   useEffect(() => {
     const loadingTick = setTimeout(() => {
       console.log("[GhostStrategist] RaceScreen session loaded", {
+        isDemoRace,
         pointCount: points.length,
         sessionId: session.id
       });
@@ -190,51 +193,69 @@ export default function RaceScreen() {
     return () => {
       clearTimeout(loadingTick);
     };
-  }, [points.length, session.id]);
+  }, [isDemoRace, points.length, session.id]);
 
   useEffect(() => {
     simulatedHRRef.current = bpm;
   }, [bpm]);
 
   const handleCoachingDismiss = useCallback(() => {
-    console.log("[GhostStrategist] RaceScreen coaching dismissed");
     setLatestCoaching(null);
   }, []);
 
-  async function maybeRequestCoaching(gapMeters: number | null, force = false) {
+  async function maybeRequestCoaching(
+    elapsedMs: number,
+    gapMeters: number | null,
+    projectedFinishMs: number,
+    elevationAhead: number,
+    force = false
+  ) {
     const now = Date.now();
 
-    if (
-      !force &&
-      now - lastCoachingCallRef.current < COACHING_CONFIG.minIntervalMs
-    ) {
+    if (!force && now - lastCoachingCallRef.current < COACHING_CONFIG.minIntervalMs) {
       return;
     }
 
     lastCoachingCallRef.current = now;
 
+    const pace = currentPaceRef.current ?? session.summary.averagePace ?? getTargetPace(session.mode);
+    const timeGapSeconds = estimateTimeGapSeconds(gapMeters ?? 0, pace);
     const snapshot = {
       distanceRemaining: Math.max(session.distance - totalDistanceRef.current, 0),
+      elapsedMs,
+      elevationAhead,
       gapMeters: gapMeters ?? 0,
-      pace: currentPaceRef.current ?? 0,
-      simulatedHR: simulatedHRRef.current,
-      upcomingElevationDelta: COACHING_CONFIG.upcomingElevationDelta
+      heartRate: simulatedHRRef.current,
+      maxHeartRate: DEMO_USER_PROFILE.estimatedMaxHeartRate,
+      mode: session.mode,
+      pace,
+      projectedFinishMs,
+      speed: pace > 0 ? 1000 / (pace * 60) : 0,
+      targetPace: session.goal?.targetPaceMinPerKm ?? getTargetPace(session.mode),
+      timeGapSeconds,
+      weatherWindMph: session.weather?.windMph ?? COACHING_CONFIG.defaultWeatherWindMph
     };
 
     console.log("[GhostStrategist] RaceScreen coaching snapshot built", snapshot);
 
-    try {
-      const instruction = await getCoachingInstruction(snapshot);
+    const instruction = await getCoachingInstruction(snapshot);
+    const coachingEvent: CoachingEvent = {
+      elapsedMs,
+      gapMeters: snapshot.gapMeters,
+      heartRate: snapshot.heartRate,
+      id: `${session.id}-${now}`,
+      instruction: instruction.instruction,
+      projectedFinishMs,
+      reason: instruction.reason,
+      safetyOverride: instruction.safetyOverride,
+      severity: instruction.severity,
+      timestamp: now,
+      toolUsed: instruction.toolUsed
+    };
 
-      console.log("[GhostStrategist] RaceScreen coaching response stored", {
-        instruction
-      });
-      setLatestCoaching(instruction);
-    } catch (error) {
-      console.log("[GhostStrategist] RaceScreen coaching request failed", {
-        error
-      });
-    }
+    coachingEventsRef.current = [...coachingEventsRef.current, coachingEvent];
+    setCoachingEvents(coachingEventsRef.current);
+    setLatestCoaching(instruction);
   }
 
   function stopGhostAnimation() {
@@ -261,9 +282,6 @@ export default function RaceScreen() {
       animationFrameRef.current = requestAnimationFrame(animate);
     };
 
-    console.log("[GhostStrategist] RaceScreen ghost animation started", {
-      ghostElapsedMs: ghostElapsedRef.current
-    });
     animationFrameRef.current = requestAnimationFrame(animate);
   }
 
@@ -275,12 +293,13 @@ export default function RaceScreen() {
     ghostPausedRef.current = true;
     stopGhostAnimation();
     setIsBioGuardPaused(true);
-    bioGuardCoachingRequestedRef.current = true;
-    console.log("[GhostStrategist] RaceScreen bio-guard paused ghost", {
-      bpm: simulatedHRRef.current,
-      ghostElapsedMs: ghostElapsedRef.current
-    });
-    void maybeRequestCoaching(hud.gapMeters, true);
+    void maybeRequestCoaching(
+      hud.elapsedMs,
+      hud.gapMeters,
+      hud.projectedFinishMs,
+      hud.elevationAhead,
+      true
+    );
   }
 
   function resumeGhostAfterBioGuard() {
@@ -290,17 +309,11 @@ export default function RaceScreen() {
 
     ghostPausedRef.current = false;
     setIsBioGuardPaused(false);
-    bioGuardCoachingRequestedRef.current = false;
-    console.log("[GhostStrategist] RaceScreen bio-guard resumed ghost", {
-      bpm: simulatedHRRef.current,
-      ghostElapsedMs: ghostElapsedRef.current
-    });
     startGhostAnimation();
   }
 
   function stopRaceLoops() {
     raceActiveRef.current = false;
-
     stopGhostAnimation();
 
     if (renderTickRef.current !== null) {
@@ -335,11 +348,6 @@ export default function RaceScreen() {
       Math.floor(ROUTE_DRAW_CONFIG.durationMs / points.length)
     );
 
-    console.log("[GhostStrategist] RaceScreen route draw started", {
-      intervalMs,
-      pointCount: points.length
-    });
-
     routeDrawIntervalRef.current = setInterval(() => {
       setDrawnRouteCount((current) => {
         const nextCount = Math.min(points.length, current + 1);
@@ -347,7 +355,6 @@ export default function RaceScreen() {
         if (nextCount >= points.length && routeDrawIntervalRef.current !== null) {
           clearInterval(routeDrawIntervalRef.current);
           routeDrawIntervalRef.current = null;
-          console.log("[GhostStrategist] RaceScreen route draw finished");
         }
 
         return nextCount;
@@ -362,59 +369,50 @@ export default function RaceScreen() {
 
     const finalElapsedMs = Math.min(elapsedMs, session.duration);
     const averagePace = getAveragePace(finalElapsedMs, totalDistanceRef.current);
+    const result: RaceResult = {
+      averagePace,
+      coachingEventCount: coachingEventsRef.current.length,
+      completedAt: Date.now(),
+      finalGapMeters: gapMeters,
+      ghostTimeMs: session.duration,
+      userTimeMs: finalElapsedMs
+    };
 
     raceEndedRef.current = true;
     stopRaceLoops();
     setIsRacing(false);
-    setHud({
-      elapsedMs: finalElapsedMs,
-      gapMeters,
-      pace: currentPaceRef.current,
-      totalDistance: totalDistanceRef.current
-    });
-    setRaceResult({
-      averagePace,
-      finalGapMeters: gapMeters,
-      ghostTimeMs: session.duration,
-      userTimeMs: finalElapsedMs
-    });
-
-    console.log("[GhostStrategist] RaceScreen race ended", {
-      averagePace,
-      finalGapMeters: gapMeters,
-      ghostTimeMs: session.duration,
-      totalDistance: totalDistanceRef.current,
-      userTimeMs: finalElapsedMs
-    });
+    setRaceResult(result);
+    void saveRaceResult(session.id, result, coachingEventsRef.current);
   }
 
   function handleRaceAgain() {
-    console.log("[GhostStrategist] RaceScreen race again pressed", {
-      sessionId: session.id
-    });
-
     stopRaceLoops();
     raceEndedRef.current = false;
     raceStartRef.current = null;
-    currentPaceRef.current = null;
+    currentPaceRef.current = session.summary.averagePace;
     ghostElapsedRef.current = 0;
     ghostPausedRef.current = false;
-    bioGuardCoachingRequestedRef.current = false;
     totalDistanceRef.current = 0;
     lastCoachingCallRef.current = 0;
     lastUserPointRef.current = null;
+    coachingEventsRef.current = [];
     ghostRef.current = {
       lat: points[0].lat,
       lng: points[0].lng
     };
+    setCoachingEvents([]);
     setCountdown(COUNTDOWN_START);
-    setGhostMarkerTick(0);
     setDrawnRouteCount(0);
+    setGhostMarkerTick(0);
     setIsBioGuardPaused(false);
     setHud({
+      elevationAhead: 0,
       elapsedMs: 0,
       gapMeters: null,
-      pace: null,
+      heartRateZone: "easy",
+      pace: session.summary.averagePace,
+      projectedFinishMs: session.duration,
+      timeGapSeconds: 0,
       totalDistance: 0
     });
     setIsRacing(false);
@@ -424,22 +422,27 @@ export default function RaceScreen() {
   }
 
   function handleBackHome() {
-    console.log("[GhostStrategist] RaceScreen back home pressed");
     stopRaceLoops();
     navigation.navigate("HomeScreen");
   }
 
   useEffect(() => {
+    if (isDemoRace) {
+      const firstPoint = points[0];
+
+      if (firstPoint) {
+        const demoCoord = toCoord(firstPoint);
+        userCoordRef.current = demoCoord;
+        setUserCoord(demoCoord);
+      }
+
+      return undefined;
+    }
+
     let cleanup: (() => void) | undefined;
     let mounted = true;
 
-    console.log("[GhostStrategist] RaceScreen requesting location permission");
-
     void requestLocationPermission().then((granted) => {
-      console.log("[GhostStrategist] RaceScreen location permission result", {
-        granted
-      });
-
       if (!mounted) {
         return;
       }
@@ -450,7 +453,6 @@ export default function RaceScreen() {
       }
 
       cleanup = startWatchingLocation((nextCoord) => {
-        console.log("[GhostStrategist] RaceScreen user location update", nextCoord);
         userCoordRef.current = nextCoord;
         setUserCoord(nextCoord);
         mapRef.current?.animateToRegion({
@@ -474,17 +476,6 @@ export default function RaceScreen() {
           if (timeDeltaMs >= 1000 && distanceDelta >= 1) {
             totalDistanceRef.current += distanceDelta;
             currentPaceRef.current = timeDeltaMs / 60000 / (distanceDelta / 1000);
-            console.log("[GhostStrategist] RaceScreen accepted pace sample", {
-              currentPace: currentPaceRef.current,
-              distanceDelta,
-              totalDistance: totalDistanceRef.current
-            });
-          } else {
-            console.log("[GhostStrategist] RaceScreen skipped pace sample", {
-              distanceDelta,
-              previousPace: currentPaceRef.current,
-              timeDeltaMs
-            });
           }
         }
 
@@ -496,11 +487,10 @@ export default function RaceScreen() {
     });
 
     return () => {
-      console.log("[GhostStrategist] RaceScreen location cleanup");
       mounted = false;
       cleanup?.();
     };
-  }, []);
+  }, [isDemoRace, points]);
 
   useEffect(() => {
     if (!isRacing || raceEndedRef.current) {
@@ -519,7 +509,6 @@ export default function RaceScreen() {
 
   useEffect(() => {
     if (isSessionLoading || points.length === 0) {
-      console.log("[GhostStrategist] RaceScreen has no points to race");
       return undefined;
     }
 
@@ -528,17 +517,9 @@ export default function RaceScreen() {
       lng: points[0].lng
     };
 
-    console.log("[GhostStrategist] RaceScreen countdown started", {
-      sessionId: session.id
-    });
-
     countdownIntervalRef.current = setInterval(() => {
       setCountdown((current) => {
         const nextCountdown = current - 1;
-
-        console.log("[GhostStrategist] RaceScreen countdown tick", {
-          nextCountdown
-        });
 
         if (nextCountdown <= 0 && countdownIntervalRef.current !== null) {
           clearInterval(countdownIntervalRef.current);
@@ -554,17 +535,12 @@ export default function RaceScreen() {
         clearInterval(countdownIntervalRef.current);
       }
     };
-  }, [isSessionLoading, points, raceVersion, session.id]);
+  }, [isSessionLoading, points, raceVersion]);
 
   useEffect(() => {
     if (isSessionLoading || countdown !== 0 || points.length === 0 || isRacing) {
       return undefined;
     }
-
-    console.log("[GhostStrategist] RaceScreen race started", {
-      pointCount: points.length,
-      sessionId: session.id
-    });
 
     setIsRacing(true);
     raceStartRef.current = Date.now();
@@ -572,17 +548,15 @@ export default function RaceScreen() {
     raceEndedRef.current = false;
     ghostElapsedRef.current = 0;
     ghostPausedRef.current = false;
-    bioGuardCoachingRequestedRef.current = false;
-    setIsBioGuardPaused(false);
+    totalDistanceRef.current = 0;
+    lastCoachingCallRef.current = 0;
+    currentPaceRef.current = session.summary.averagePace;
     lastUserPointRef.current = userCoordRef.current
       ? {
           ...userCoordRef.current,
           timestamp: raceStartRef.current
         }
       : null;
-    currentPaceRef.current = null;
-    totalDistanceRef.current = 0;
-    lastCoachingCallRef.current = 0;
 
     startGhostAnimation();
     startRouteDraw();
@@ -591,44 +565,83 @@ export default function RaceScreen() {
     }, RENDER_INTERVAL_MS);
     hudIntervalRef.current = setInterval(() => {
       const raceStart = raceStartRef.current;
-      const userPosition = userCoordRef.current;
-      const ghostPositionRef = ghostRef.current;
 
       if (raceStart === null) {
         return;
       }
 
       const elapsedMs = Date.now() - raceStart;
-      const gapMeters = getSignedGapMeters(points[0], userPosition, ghostPositionRef);
 
-      console.log("[GhostStrategist] RaceScreen HUD update", {
+      if (isDemoRace) {
+        const userElapsed = Math.min(
+          elapsedMs * 0.965 + Math.sin(elapsedMs / 14000) * 3500,
+          session.duration
+        );
+        const demoPosition = ghostPosition(points, userElapsed);
+        const demoPoint = getPointNearElapsed(points, userElapsed);
+        const demoCoord = toCoord({
+          ...demoPosition,
+          accuracy: 4,
+          elevation: demoPoint?.elevation ?? null,
+          speed: demoPoint?.speed ?? null
+        });
+
+        userCoordRef.current = demoCoord;
+        setUserCoord(demoCoord);
+        totalDistanceRef.current = Math.min(
+          session.distance * (userElapsed / session.duration),
+          session.distance
+        );
+        currentPaceRef.current = demoPoint?.pace ?? session.summary.averagePace;
+      }
+
+      const gapMeters = getSignedGapMeters(points[0], userCoordRef.current, ghostRef.current);
+      const pace = currentPaceRef.current ?? session.summary.averagePace ?? getTargetPace(session.mode);
+      const elevationAhead = getUpcomingElevationDelta(
+        points,
+        ghostElapsedRef.current,
+        COACHING_CONFIG.lookaheadMs
+      );
+      const projectedFinishMs = predictFinishTimeMs(
         elapsedMs,
-        gapMeters,
-        pace: currentPaceRef.current,
-        pausedByBioGuard: ghostPausedRef.current,
-        totalDistance: totalDistanceRef.current
-      });
+        Math.max(session.distance - totalDistanceRef.current, 0),
+        pace,
+        elevationAhead,
+        session.weather?.windMph ?? COACHING_CONFIG.defaultWeatherWindMph
+      );
+      const timeGapSeconds = estimateTimeGapSeconds(gapMeters ?? 0, pace);
 
       if (elapsedMs >= session.duration) {
         finishRace(elapsedMs, gapMeters);
         return;
       }
 
-      void maybeRequestCoaching(gapMeters);
-
-      setHud({
+      void maybeRequestCoaching(
         elapsedMs,
         gapMeters,
-        pace: currentPaceRef.current,
+        projectedFinishMs,
+        elevationAhead
+      );
+
+      setHud({
+        elevationAhead,
+        elapsedMs,
+        gapMeters,
+        heartRateZone: getHeartRateZone(
+          simulatedHRRef.current,
+          DEMO_USER_PROFILE.estimatedMaxHeartRate
+        ),
+        pace,
+        projectedFinishMs,
+        timeGapSeconds,
         totalDistance: totalDistanceRef.current
       });
     }, HUD_INTERVAL_MS);
 
     return () => {
-      console.log("[GhostStrategist] RaceScreen race cleanup");
       stopRaceLoops();
     };
-  }, [countdown, isRacing, isSessionLoading, points, session.duration, session.id]);
+  }, [countdown, isDemoRace, isRacing, isSessionLoading, points, session]);
 
   if (isSessionLoading) {
     return (
@@ -638,7 +651,7 @@ export default function RaceScreen() {
     );
   }
 
-  if (permissionDenied) {
+  if (permissionDenied && !isDemoRace) {
     return (
       <View style={styles.centered}>
         <Text style={styles.permissionTitle}>Location permission required.</Text>
@@ -678,8 +691,8 @@ export default function RaceScreen() {
               latitude: point.lat,
               longitude: point.lng
             }))}
-            strokeColor="#6B7280"
-            strokeWidth={3}
+            strokeColor="#475569"
+            strokeWidth={4}
           />
         ) : null}
         {userCoord ? (
@@ -704,43 +717,30 @@ export default function RaceScreen() {
           </Marker>
         ) : null}
       </MapView>
+      {isDemoRace ? (
+        <View style={styles.demoBadge}>
+          <Text style={styles.demoBadgeText}>Demo GPS stream</Text>
+        </View>
+      ) : null}
       {userCoord && userCoord.accuracy > GPS_CONFIG.weakAccuracyMeters ? (
         <View style={styles.gpsBadge}>
           <Text style={styles.gpsBadgeText}>GPS weak</Text>
         </View>
       ) : null}
+      {isBioGuardPaused ? (
+        <View style={styles.bioGuardBadge}>
+          <Text style={styles.bioGuardText}>Bio-Guard active</Text>
+        </View>
+      ) : null}
       <View style={styles.hud}>
-        <View>
-          <Text style={styles.hudLabel}>Gap</Text>
-          <Text
-            style={[
-              styles.hudValue,
-              hud.gapMeters === null
-                ? null
-                : hud.gapMeters >= 0
-                  ? styles.positiveGap
-                  : styles.negativeGap
-            ]}
-          >
-            {formatGap(hud.gapMeters)}
-          </Text>
-        </View>
-        <View>
-          <Text style={styles.hudLabel}>Pace</Text>
-          <Text style={styles.hudValue}>{formatPace(hud.pace)}</Text>
-        </View>
-        <View>
-          <Text style={styles.hudLabel}>BPM</Text>
-          <Text style={styles.hudValue}>{bpm}</Text>
-        </View>
-        <View>
-          <Text style={styles.hudLabel}>Distance</Text>
-          <Text style={styles.hudValue}>{Math.round(hud.totalDistance)} m</Text>
-        </View>
-        <View>
-          <Text style={styles.hudLabel}>Time</Text>
-          <Text style={styles.hudValue}>{formatElapsed(hud.elapsedMs)}</Text>
-        </View>
+        <HudItem label="Gap" value={formatGap(hud.gapMeters)} strong />
+        <HudItem label="Time Gap" value={`${hud.timeGapSeconds}s`} />
+        <HudItem label="Pace" value={formatPace(hud.pace)} />
+        <HudItem label="BPM" value={`${bpm}`} />
+        <HudItem label="Zone" value={hud.heartRateZone} />
+        <HudItem label="Finish" value={formatSessionDuration(hud.projectedFinishMs)} />
+        <HudItem label="Elev" value={`${hud.elevationAhead >= 0 ? "+" : ""}${hud.elevationAhead} m`} />
+        <HudItem label="Events" value={String(coachingEvents.length)} />
       </View>
       {latestCoaching ? (
         <CoachingCard
@@ -759,39 +759,11 @@ export default function RaceScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.resultCard}>
             <Text style={styles.resultTitle}>Race Complete</Text>
-            <View style={styles.resultRow}>
-              <Text style={styles.resultLabel}>Your time</Text>
-              <Text style={styles.resultValue}>
-                {formatElapsed(raceResult?.userTimeMs ?? 0)}
-              </Text>
-            </View>
-            <View style={styles.resultRow}>
-              <Text style={styles.resultLabel}>Ghost time</Text>
-              <Text style={styles.resultValue}>
-                {formatElapsed(raceResult?.ghostTimeMs ?? session.duration)}
-              </Text>
-            </View>
-            <View style={styles.resultRow}>
-              <Text style={styles.resultLabel}>Final gap</Text>
-              <Text
-                style={[
-                  styles.resultValue,
-                  raceResult?.finalGapMeters === null
-                    ? null
-                    : (raceResult?.finalGapMeters ?? 0) >= 0
-                      ? styles.positiveGap
-                      : styles.negativeGap
-                ]}
-              >
-                {formatGap(raceResult?.finalGapMeters ?? null)}
-              </Text>
-            </View>
-            <View style={styles.resultRow}>
-              <Text style={styles.resultLabel}>Average pace</Text>
-              <Text style={styles.resultValue}>
-                {formatPace(raceResult?.averagePace ?? null)}
-              </Text>
-            </View>
+            <ResultRow label="Your time" value={formatSessionDuration(raceResult?.userTimeMs ?? 0)} />
+            <ResultRow label="Ghost time" value={formatSessionDuration(raceResult?.ghostTimeMs ?? session.duration)} />
+            <ResultRow label="Final gap" value={formatGap(raceResult?.finalGapMeters ?? null)} />
+            <ResultRow label="Average pace" value={formatPace(raceResult?.averagePace ?? null)} />
+            <ResultRow label="Coaching events" value={String(raceResult?.coachingEventCount ?? 0)} />
             <Pressable style={styles.primaryButton} onPress={handleRaceAgain}>
               <Text style={styles.primaryButtonText}>Race Again</Text>
             </Pressable>
@@ -805,7 +777,65 @@ export default function RaceScreen() {
   );
 }
 
+function toCoord(point: {
+  accuracy?: number;
+  elevation?: number | null;
+  lat: number;
+  lng: number;
+  speed?: number | null;
+}): Coord {
+  return {
+    accuracy: point.accuracy ?? 0,
+    elevation: point.elevation ?? null,
+    heading: null,
+    lat: point.lat,
+    lng: point.lng,
+    speed: point.speed ?? null
+  };
+}
+
+function HudItem({
+  label,
+  strong,
+  value
+}: {
+  label: string;
+  strong?: boolean;
+  value: string;
+}) {
+  return (
+    <View style={styles.hudItem}>
+      <Text style={styles.hudLabel}>{label}</Text>
+      <Text style={[styles.hudValue, strong ? styles.hudStrong : null]}>{value}</Text>
+    </View>
+  );
+}
+
+function ResultRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.resultRow}>
+      <Text style={styles.resultLabel}>{label}</Text>
+      <Text style={styles.resultValue}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  bioGuardBadge: {
+    backgroundColor: "#B91C1C",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    position: "absolute",
+    right: 12,
+    top: 72,
+    zIndex: 1
+  },
+  bioGuardText: {
+    ...TYPOGRAPHY.caption,
+    color: "#FFFFFF",
+    fontWeight: "800"
+  },
   centered: {
     alignItems: "center",
     flex: 1,
@@ -826,13 +856,28 @@ const styles = StyleSheet.create({
     color: "#111827",
     fontWeight: "800"
   },
+  demoBadge: {
+    backgroundColor: "#0F172A",
+    borderRadius: 8,
+    left: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    position: "absolute",
+    top: 72,
+    zIndex: 1
+  },
+  demoBadgeText: {
+    ...TYPOGRAPHY.caption,
+    color: "#FFFFFF",
+    fontWeight: "800"
+  },
   ghostMarker: {
-    backgroundColor: "rgba(107, 114, 128, 0.58)",
-    borderColor: "rgba(255, 255, 255, 0.7)",
-    borderRadius: 10,
+    backgroundColor: "rgba(15, 23, 42, 0.6)",
+    borderColor: "#FFFFFF",
+    borderRadius: 11,
     borderWidth: 2,
-    height: 20,
-    width: 20
+    height: 22,
+    width: 22
   },
   gpsBadge: {
     backgroundColor: "#FFC107",
@@ -841,7 +886,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     position: "absolute",
-    top: 76,
+    top: 108,
     zIndex: 1
   },
   gpsBadgeText: {
@@ -850,27 +895,34 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   },
   hud: {
-    backgroundColor: "rgba(255, 255, 255, 0.92)",
-    borderColor: "#E5E7EB",
+    backgroundColor: "rgba(255, 255, 255, 0.94)",
+    borderColor: "#E2E8F0",
     borderRadius: 8,
     borderWidth: 1,
     flexDirection: "row",
-    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
     left: 12,
-    padding: 12,
+    padding: 10,
     position: "absolute",
     right: 12,
     top: 12,
     zIndex: 1
   },
+  hudItem: {
+    minWidth: "22%"
+  },
   hudLabel: {
     ...TYPOGRAPHY.caption,
-    color: "#6B7280",
+    color: "#64748B"
+  },
+  hudStrong: {
+    color: "#0F766E"
   },
   hudValue: {
     ...TYPOGRAPHY.caption,
     color: "#111827",
-    fontWeight: "700",
+    fontWeight: "800",
     marginTop: 2
   },
   map: {
@@ -880,12 +932,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.24)",
     flex: 1,
     justifyContent: "flex-end"
-  },
-  negativeGap: {
-    color: "#DC2626"
-  },
-  positiveGap: {
-    color: "#15803D"
   },
   permissionTitle: {
     ...TYPOGRAPHY.body,
@@ -902,7 +948,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...TYPOGRAPHY.body,
     color: "#FFFFFF",
-    fontWeight: "700"
+    fontWeight: "800"
   },
   resultCard: {
     backgroundColor: "#FFFFFF",
@@ -912,10 +958,10 @@ const styles = StyleSheet.create({
   },
   resultLabel: {
     ...TYPOGRAPHY.caption,
-    color: "#6B7280",
+    color: "#64748B"
   },
   resultRow: {
-    borderBottomColor: "#E5E7EB",
+    borderBottomColor: "#E2E8F0",
     borderBottomWidth: 1,
     paddingVertical: 10
   },
@@ -928,8 +974,11 @@ const styles = StyleSheet.create({
   resultValue: {
     ...TYPOGRAPHY.body,
     color: "#111827",
-    fontWeight: "700",
+    fontWeight: "800",
     marginTop: 4
+  },
+  screen: {
+    flex: 1
   },
   secondaryButton: {
     alignItems: "center",
@@ -942,15 +991,12 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     ...TYPOGRAPHY.body,
     color: "#111827",
-    fontWeight: "700"
+    fontWeight: "800"
   },
   settingsLink: {
     ...TYPOGRAPHY.body,
     color: "#007AFF",
     fontWeight: "700"
-  },
-  screen: {
-    flex: 1
   },
   userMarker: {
     backgroundColor: "#007AFF",

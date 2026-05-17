@@ -3,5 +3,5 @@ export const COACHING_CONFIG = {
   model: "gpt-4o-mini",
   openAiChatCompletionsUrl: "https://api.openai.com/v1/chat/completions",
   systemPrompt:
-    "You are a real-time race coach. Respond only with JSON containing instruction (max 15 words) and severity (info, caution, or warning)."
+    "You are Ghost Strategist, a real-time running and cycling race coach. Use the provided tool snapshot. Safety always overrides performance. Respond only with JSON containing instruction (max 16 words), severity (info, push, hold, recover, danger), reason, safetyOverride, and toolUsed."
 } as const;

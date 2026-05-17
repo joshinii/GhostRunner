@@ -10,7 +10,7 @@ import Animated, {
 import { CoachingInstruction } from "../services/coaching";
 import { TYPOGRAPHY } from "../theme";
 
-type CoachingCardProps = CoachingInstruction & {
+type CoachingCardProps = Pick<CoachingInstruction, "instruction" | "severity"> & {
   bottomOffset: number;
   onDismiss: () => void;
 };
@@ -19,9 +19,11 @@ const AUTO_DISMISS_MS = 8000;
 const ENTRY_OFFSET = 120;
 
 const BACKGROUND_COLORS: Record<CoachingInstruction["severity"], string> = {
-  caution: "#FFC107",
+  danger: "#B91C1C",
+  hold: "#FFFFFF",
   info: "#FFFFFF",
-  warning: "#F44336"
+  push: "#DCFCE7",
+  recover: "#FEF3C7"
 };
 
 export default function CoachingCard({
@@ -71,7 +73,7 @@ export default function CoachingCard({
     onDismiss();
   }
 
-  const isDarkBackground = severity === "warning";
+  const isDarkBackground = severity === "danger";
 
   return (
     <Animated.View

@@ -17,3 +17,27 @@ export function formatSessionDuration(durationMs: number): string {
     .toString()
     .padStart(2, "0")}`;
 }
+
+export function formatPace(pace: number | null | undefined): string {
+  if (typeof pace !== "number" || !Number.isFinite(pace) || pace <= 0) {
+    return "--";
+  }
+
+  return `${pace.toFixed(1)} min/km`;
+}
+
+export function formatHeartRate(heartRate: number | null | undefined): string {
+  if (typeof heartRate !== "number") {
+    return "--";
+  }
+
+  return `${Math.round(heartRate)} bpm`;
+}
+
+export function formatElevation(elevationMeters: number | null | undefined): string {
+  if (typeof elevationMeters !== "number") {
+    return "--";
+  }
+
+  return `${Math.round(elevationMeters)} m`;
+}

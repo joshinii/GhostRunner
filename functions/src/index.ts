@@ -2,19 +2,32 @@ import * as functions from "firebase-functions";
 
 import { COACHING_CONFIG } from "./config";
 
-type CoachingSeverity = "info" | "caution" | "warning";
+type ActivityMode = "run" | "ride";
+type CoachingSeverity = "info" | "push" | "hold" | "recover" | "danger";
 
 type CoachingSnapshot = {
-  pace: number;
-  gapMeters: number;
-  simulatedHR: number;
-  upcomingElevationDelta: number;
   distanceRemaining: number;
+  elapsedMs: number;
+  elevationAhead: number;
+  gapMeters: number;
+  heartRate: number;
+  maxHeartRate: number;
+  mode: ActivityMode;
+  pace: number;
+  projectedFinishMs: number;
+  speed: number;
+  targetPace: number;
+  timeGapSeconds: number;
+  weatherWindMph: number;
 };
 
 type CoachingInstruction = {
   instruction: string;
+  projectedFinishMs?: number;
+  reason: string;
+  safetyOverride: boolean;
   severity: CoachingSeverity;
+  toolUsed: string;
 };
 
 function isNumber(value: unknown): value is number {
@@ -25,28 +38,115 @@ function parseSnapshot(data: unknown): CoachingSnapshot {
   const snapshot = data as Partial<CoachingSnapshot>;
 
   if (
-    !isNumber(snapshot.pace) ||
+    !isNumber(snapshot.distanceRemaining) ||
+    !isNumber(snapshot.elapsedMs) ||
+    !isNumber(snapshot.elevationAhead) ||
     !isNumber(snapshot.gapMeters) ||
-    !isNumber(snapshot.simulatedHR) ||
-    !isNumber(snapshot.upcomingElevationDelta) ||
-    !isNumber(snapshot.distanceRemaining)
+    !isNumber(snapshot.heartRate) ||
+    !isNumber(snapshot.maxHeartRate) ||
+    !isNumber(snapshot.pace) ||
+    !isNumber(snapshot.projectedFinishMs) ||
+    !isNumber(snapshot.speed) ||
+    !isNumber(snapshot.targetPace) ||
+    !isNumber(snapshot.timeGapSeconds) ||
+    !isNumber(snapshot.weatherWindMph) ||
+    (snapshot.mode !== "run" && snapshot.mode !== "ride")
   ) {
     throw new functions.https.HttpsError(
       "invalid-argument",
-      "pace, gapMeters, simulatedHR, upcomingElevationDelta, and distanceRemaining are required numbers."
+      "A complete Ghost Strategist snapshot is required."
     );
   }
 
   return {
     distanceRemaining: snapshot.distanceRemaining,
+    elapsedMs: snapshot.elapsedMs,
+    elevationAhead: snapshot.elevationAhead,
     gapMeters: snapshot.gapMeters,
+    heartRate: snapshot.heartRate,
+    maxHeartRate: snapshot.maxHeartRate,
+    mode: snapshot.mode,
     pace: snapshot.pace,
-    simulatedHR: snapshot.simulatedHR,
-    upcomingElevationDelta: snapshot.upcomingElevationDelta
+    projectedFinishMs: snapshot.projectedFinishMs,
+    speed: snapshot.speed,
+    targetPace: snapshot.targetPace,
+    timeGapSeconds: snapshot.timeGapSeconds,
+    weatherWindMph: snapshot.weatherWindMph
   };
 }
 
-function parseInstruction(content: string): CoachingInstruction {
+function heuristicInstruction(snapshot: CoachingSnapshot): CoachingInstruction {
+  const heartRatePct = snapshot.heartRate / snapshot.maxHeartRate;
+
+  if (
+    snapshot.heartRate >= COACHING_CONFIG.heartRateWarningThreshold ||
+    heartRatePct >= 0.96
+  ) {
+    return {
+      instruction: "Heart rate is too high. Ease off now and recover.",
+      projectedFinishMs: snapshot.projectedFinishMs,
+      reason: "Bio-Guard detected unsafe exertion.",
+      safetyOverride: true,
+      severity: "danger",
+      toolUsed: "Bio-Guard Tool"
+    };
+  }
+
+  if (heartRatePct >= 0.92 && snapshot.elevationAhead > 4) {
+    return {
+      instruction: "Hold effort before the climb. Do not chase yet.",
+      projectedFinishMs: snapshot.projectedFinishMs,
+      reason: "Threshold heart rate plus upcoming elevation raises fatigue risk.",
+      safetyOverride: false,
+      severity: "recover",
+      toolUsed: "Heart Rate Analysis Tool"
+    };
+  }
+
+  if (snapshot.gapMeters < -18 && heartRatePct < 0.9) {
+    return {
+      instruction: "Close the gap gradually. Add cadence for thirty seconds.",
+      projectedFinishMs: snapshot.projectedFinishMs,
+      reason: "Gap is negative and heart rate remains controllable.",
+      safetyOverride: false,
+      severity: "push",
+      toolUsed: "Dynamic Pacer Tool"
+    };
+  }
+
+  if (snapshot.elevationAhead > 6) {
+    return {
+      instruction: "Shorten stride and settle breathing before the hill.",
+      projectedFinishMs: snapshot.projectedFinishMs,
+      reason: "Upcoming Elevation Scan found a near-term climb.",
+      safetyOverride: false,
+      severity: "hold",
+      toolUsed: "Upcoming Elevation Scan Tool"
+    };
+  }
+
+  if (snapshot.weatherWindMph >= 14) {
+    return {
+      instruction: "Stay smooth into the wind. Keep effort steady.",
+      projectedFinishMs: snapshot.projectedFinishMs,
+      reason: "Weather Analyst detected effort-costing wind.",
+      safetyOverride: false,
+      severity: "hold",
+      toolUsed: "Terrain and Weather Analyst Tool"
+    };
+  }
+
+  return {
+    instruction: "Hold this pace. Keep the ghost in sight.",
+    projectedFinishMs: snapshot.projectedFinishMs,
+    reason: "Projected finish, gap, and heart rate are balanced.",
+    safetyOverride: false,
+    severity: "info",
+    toolUsed: "Predict Finish Time Tool"
+  };
+}
+
+function parseInstruction(content: string, snapshot: CoachingSnapshot): CoachingInstruction {
   let parsed: Partial<CoachingInstruction>;
 
   try {
@@ -56,28 +156,29 @@ function parseInstruction(content: string): CoachingInstruction {
       content,
       error
     });
-    throw new functions.https.HttpsError(
-      "internal",
-      "OpenAI returned invalid JSON."
-    );
+    return heuristicInstruction(snapshot);
   }
 
   if (
     typeof parsed.instruction !== "string" ||
-    !["info", "caution", "warning"].includes(parsed.severity ?? "")
+    typeof parsed.reason !== "string" ||
+    typeof parsed.safetyOverride !== "boolean" ||
+    typeof parsed.toolUsed !== "string" ||
+    !["info", "push", "hold", "recover", "danger"].includes(parsed.severity ?? "")
   ) {
     console.log("[GhostStrategist] coaching JSON shape invalid", {
       parsed
     });
-    throw new functions.https.HttpsError(
-      "internal",
-      "OpenAI returned an invalid coaching instruction."
-    );
+    return heuristicInstruction(snapshot);
   }
 
   return {
     instruction: parsed.instruction,
-    severity: parsed.severity as CoachingSeverity
+    projectedFinishMs: snapshot.projectedFinishMs,
+    reason: parsed.reason,
+    safetyOverride: parsed.safetyOverride,
+    severity: parsed.severity as CoachingSeverity,
+    toolUsed: parsed.toolUsed
   };
 }
 
@@ -87,29 +188,22 @@ export const getCoachingInstruction = functions.https.onCall(
 
     console.log("[GhostStrategist] coaching request received", snapshot);
 
-    if (snapshot.simulatedHR >= COACHING_CONFIG.heartRateWarningThreshold) {
-      console.log("[GhostStrategist] coaching skipped OpenAI for high HR", {
-        simulatedHR: snapshot.simulatedHR
+    const safeInstruction = heuristicInstruction(snapshot);
+
+    if (safeInstruction.safetyOverride) {
+      console.log("[GhostStrategist] coaching skipped OpenAI for Bio-Guard", {
+        heartRate: snapshot.heartRate
       });
 
-      return {
-        instruction: "Heart rate too high — slow down and recover",
-        severity: "warning"
-      };
+      return safeInstruction;
     }
 
     const openAiKey = functions.config().openai?.key;
 
     if (typeof openAiKey !== "string" || openAiKey.length === 0) {
-      throw new functions.https.HttpsError(
-        "failed-precondition",
-        "OpenAI key is not configured."
-      );
+      console.log("[GhostStrategist] coaching using heuristic fallback; missing OpenAI key");
+      return safeInstruction;
     }
-
-    console.log("[GhostStrategist] coaching OpenAI request started", {
-      model: COACHING_CONFIG.model
-    });
 
     const response = await fetch(COACHING_CONFIG.openAiChatCompletionsUrl, {
       body: JSON.stringify({
@@ -119,7 +213,10 @@ export const getCoachingInstruction = functions.https.onCall(
             role: "system"
           },
           {
-            content: JSON.stringify(snapshot),
+            content: JSON.stringify({
+              ...snapshot,
+              heuristicBaseline: safeInstruction
+            }),
             role: "user"
           }
         ],
@@ -143,10 +240,7 @@ export const getCoachingInstruction = functions.https.onCall(
         status: response.status
       });
 
-      throw new functions.https.HttpsError(
-        "internal",
-        "OpenAI coaching request failed."
-      );
+      return safeInstruction;
     }
 
     const responseJson = (await response.json()) as {
@@ -162,13 +256,10 @@ export const getCoachingInstruction = functions.https.onCall(
       console.log("[GhostStrategist] coaching OpenAI response missing content", {
         responseJson
       });
-      throw new functions.https.HttpsError(
-        "internal",
-        "OpenAI response did not include content."
-      );
+      return safeInstruction;
     }
 
-    const instruction = parseInstruction(content);
+    const instruction = parseInstruction(content, snapshot);
 
     console.log("[GhostStrategist] coaching instruction generated", instruction);
 

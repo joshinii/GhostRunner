@@ -1,40 +1,42 @@
-# GhostStrategist
+# Ghost Strategist
 
-iOS running app built with Expo, TypeScript, Firebase, Apple Maps, and Firebase Cloud Functions.
+Ghost Strategist is an iOS running and cycling prototype built with Expo, TypeScript,
+Firebase, Apple Maps, Firebase Cloud Functions, and an agentic AI coaching loop.
 
-The app records GPS runs, saves sessions to Firestore, lets the user race a ghost of a previous run, and shows AI coaching during the race.
+The app records GPS workouts, stores historical sessions, replays a previous
+session as a ghost, predicts finish time, monitors heart-rate safety, scans
+upcoming elevation, and speaks tactical coaching instructions during the race.
 
 ## Implemented
 
-- React Navigation stack with `HomeScreen`, `RecordScreen`, `SessionDetailScreen`, and `RaceScreen`
-- Firestore-backed session history filtered by `DEMO_USER_ID`
-- GPS recording with high accuracy updates every 1000ms
-- Route recording with points containing `lat`, `lng`, `timestamp`, and `pace`
-- Haversine distance and pace calculation
-- Map polyline rendering for recorded routes
-- Firestore session save to `/sessions`
-- Empty, loading, permission-denied, retry, and weak GPS states
-- Session detail screen with run stats
-- Pure ghost engine with binary search interpolation
-- Race screen with live user marker and ghost marker
-- Race HUD with gap, pace, BPM, distance, and elapsed time
-- Simulated heart rate hook with drift and recovery behavior
-- Race end result bottom sheet with Race Again and Back to Home
-- Firebase callable Cloud Function `getCoachingInstruction`
-- Coaching trigger every 15 seconds during a race
-- Coaching overlay card with severity colors, slide-up animation, auto-dismiss, tap-dismiss, and text-to-speech
-- Bio-guard pause: ghost freezes at high simulated HR and resumes after recovery
-- Shared typography system in `theme.ts`
-- App icon and splash configuration in `app.json`
+- Dashboard with athlete profile, session metrics, sync status, and demo seeding.
+- GPS recording with high-accuracy 1 Hz updates.
+- Running and cycling modes.
+- Telemetry points with latitude, longitude, timestamp, pace, speed, elevation,
+  heart rate, cadence, and GPS accuracy.
+- Firestore session storage with local in-session fallback if Firebase is offline.
+- Demo race generator for reliable simulator/classroom demos.
+- Apple Maps route polyline with live user marker and interpolated ghost marker.
+- Ghost engine using timestamp search and interpolation.
+- Race HUD with distance gap, time gap, pace, BPM, HR zone, projected finish,
+  upcoming elevation, and coaching-event count.
+- Bio-Guard safety pause when heart rate exceeds the configured threshold.
+- Agent snapshot builder with pace, gap, HR, elevation, weather, goal, and finish
+  projection.
+- Firebase callable Cloud Function `getCoachingInstruction`.
+- Deterministic coaching fallback when the OpenAI key or emulator is unavailable.
+- Coaching card with severity colors, auto-dismiss, tap-dismiss, and text-to-speech.
+- Session analytics with pace, heart-rate, and elevation mini charts.
+- Coaching event history for report evidence and interpretability.
 
 ## Requirements
 
 - Node.js
-- Expo CLI through `npx`
-- Xcode fully installed for iOS Simulator
-- Firebase CLI
+- npm
+- Xcode with iOS Simulator
+- Firebase CLI, only if running the backend emulator/deploy flow
 
-If Expo cannot find the iOS simulator, point command-line tools at Xcode:
+If Expo cannot find the iOS simulator:
 
 ```sh
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
@@ -50,26 +52,30 @@ npm install
 cd ..
 ```
 
-## Run the App
+## Run
 
-Start Firebase emulators:
+Start the iOS app:
+
+```sh
+npm run ios
+```
+
+Optional Firebase emulator:
 
 ```sh
 firebase emulators:start
 ```
 
-Start the iOS app:
-
-```sh
-npx expo start --ios
-```
+The app can still demo without Firebase because failed session saves are stored in
+an in-session local fallback. Use **Seed Demo Race** on the dashboard for a stable
+simulator demo.
 
 ## Checks
 
 Type-check the Expo app:
 
 ```sh
-npx tsc --noEmit
+npm run typecheck
 ```
 
 Build Firebase Functions:
@@ -80,32 +86,36 @@ npm run build
 cd ..
 ```
 
-## Firebase Functions
+## OpenAI Key
 
-Set the OpenAI key:
+The Cloud Function works with a deterministic heuristic fallback. To enable OpenAI
+coaching text:
 
 ```sh
 firebase functions:config:set openai.key="YOUR_KEY"
-```
-
-Deploy functions:
-
-```sh
 firebase deploy --only functions
 ```
 
-## Testing Flow
+## Demo Flow
 
-1. Start Firebase emulators.
-2. Start the iOS app.
-3. Record a run from `RecordScreen`.
-4. Stop the run and confirm it saves.
-5. Return to `HomeScreen` and select the saved session.
-6. Tap Race.
-7. Confirm countdown, route drawing, ghost marker, live marker, HUD, coaching card, TTS, and race result.
+1. Run the app in the iOS simulator.
+2. Tap **Seed Demo Race**.
+3. Open **Personal Best Chase** or **Live Rival Simulation**.
+4. Review analytics and tap **Race This Ghost**.
+5. Watch the simulated GPS stream, interpolated ghost, race HUD, coaching card,
+   Bio-Guard behavior, and final race result.
+6. Return to the session detail screen to show coaching-event evidence.
 
-Useful logs are prefixed with:
+## Project Report Mapping
 
-```text
-[GhostStrategist]
-```
+- Requirements: implemented through user profile, tracking, ghost racing, agent,
+  history, safety, and analytics modules.
+- Mobile design: dashboard, recorder, race cockpit, session analytics.
+- Model engineering: snapshot builder, heuristic safety layer, OpenAI JSON output.
+- Architecture: Expo iOS client, Firebase/Firestore, Cloud Functions, Apple Maps,
+  OpenAI-compatible coaching layer.
+- Data science: finish prediction, HR zones, elevation scan, data-quality scoring.
+- Local storage and AI: local fallback session queue plus on-device heuristic agent.
+- Feedback loop: coaching events are stored and tied to race outcomes.
+- Interpretability: every coaching event stores reason, tool used, severity, and
+  safety override.

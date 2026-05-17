@@ -11,8 +11,11 @@ import {
 const REGION_DELTA = 0.01;
 const INITIAL_COORD: Coord = {
   accuracy: 0,
+  elevation: null,
+  heading: null,
   lat: 37.3349,
-  lng: -122.009
+  lng: -122.009,
+  speed: null
 };
 
 export default function HomeScreen() {

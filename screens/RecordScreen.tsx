@@ -17,35 +17,29 @@ import MapView, {
 } from "react-native-maps";
 
 import { RootStackParamList } from "../navigation/types";
+import type { SaveSessionInput, SessionPoint } from "../services/sessions";
 import { saveSession } from "../services/sessions";
-import { GPS_CONFIG } from "../constants/config";
+import type { ActivityMode } from "../constants/config";
+import { DEMO_USER_PROFILE, GPS_CONFIG, TRAINING_GOALS } from "../constants/config";
 import {
   Coord,
   requestLocationPermission,
   startWatchingLocation
 } from "../services/location";
+import { useMockHeartRate } from "../hooks/useMockHeartRate";
 import { TYPOGRAPHY } from "../theme";
+import { summarizeTelemetry } from "../utils/raceAnalytics";
 
 const REGION_DELTA = 0.01;
 const EARTH_RADIUS_METERS = 6371000;
 
-type RecordedPoint = {
-  lat: number;
-  lng: number;
-  timestamp: number;
-  pace: number | null;
-};
+type RecordedPoint = SessionPoint;
 
 type LatLng = {
   lat: number;
   lng: number;
 };
-type PendingSave = {
-  distance: number;
-  duration: number;
-  points: RecordedPoint[];
-  startedAt: number;
-};
+type PendingSave = SaveSessionInput;
 
 function formatElapsed(elapsedMs: number): string {
   const totalSeconds = Math.floor(elapsedMs / 1000);
@@ -93,20 +87,35 @@ export default function RecordScreen() {
   const startTimeRef = useRef<number | null>(null);
   const distanceRef = useRef(0);
   const pendingSaveRef = useRef<PendingSave | null>(null);
+  const bpmRef = useRef(155);
+  const modeRef = useRef<ActivityMode>("run");
   const [coord, setCoord] = useState<Coord | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [recordedPoints, setRecordedPoints] = useState<RecordedPoint[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [mode, setMode] = useState<ActivityMode>("run");
   const [saveError, setSaveError] = useState(false);
   const [savedPoints, setSavedPoints] = useState<RecordedPoint[]>([]);
   const [totalDistance, setTotalDistance] = useState(0);
+  const bpm = useMockHeartRate({
+    gapMeters: null
+  });
+
+  useEffect(() => {
+    bpmRef.current = bpm;
+  }, [bpm]);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   console.log("[GhostStrategist] RecordScreen rendering", {
     hasCoord: coord !== null,
     isRecording,
     isSaving,
+    mode,
     permissionDenied
   });
 
@@ -121,7 +130,7 @@ export default function RecordScreen() {
         sessionId
       });
       pendingSaveRef.current = null;
-      Alert.alert("Run saved!");
+      Alert.alert("Workout saved!");
       navigation.navigate("HomeScreen");
     } catch (error) {
       console.log("[GhostStrategist] RecordScreen save failed", {
@@ -190,6 +199,7 @@ export default function RecordScreen() {
         const previousPoint = pointsRef.current[pointsRef.current.length - 1];
         let nextDistance = distanceRef.current;
         let nextPace = previousPoint?.pace ?? null;
+        let nextSpeed = nextCoord.speed ?? previousPoint?.speed ?? null;
 
         if (previousPoint) {
           const distanceDelta = getDistanceMeters(previousPoint, nextCoord);
@@ -198,6 +208,7 @@ export default function RecordScreen() {
           if (timeDeltaMs >= 1000 && distanceDelta >= 1) {
             nextDistance += distanceDelta;
             nextPace = timeDeltaMs / 60000 / (distanceDelta / 1000);
+            nextSpeed = distanceDelta / (timeDeltaMs / 1000);
             console.log("[GhostStrategist] RecordScreen accepted pace sample", {
               distanceDelta,
               nextDistance,
@@ -214,9 +225,19 @@ export default function RecordScreen() {
         }
 
         const nextPoint: RecordedPoint = {
+          accuracy: nextCoord.accuracy,
+          cadence:
+            modeRef.current === "ride"
+              ? 82 + Math.round(Math.sin(pointsRef.current.length / 6) * 5)
+              : null,
+          elevation:
+            nextCoord.elevation ??
+            Math.round((previousPoint?.elevation ?? 24) + Math.sin(pointsRef.current.length / 8) * 2),
+          heartRate: bpmRef.current,
           lat: nextCoord.lat,
           lng: nextCoord.lng,
           pace: nextPace,
+          speed: nextSpeed,
           timestamp
         };
 
@@ -247,9 +268,14 @@ export default function RecordScreen() {
     const initialPoints: RecordedPoint[] = coord
       ? [
           {
+            accuracy: coord.accuracy,
+            cadence: mode === "ride" ? 82 : null,
+            elevation: coord.elevation ?? 24,
+            heartRate: bpmRef.current,
             lat: coord.lat,
             lng: coord.lng,
             pace: null,
+            speed: coord.speed,
             timestamp: startedAt
           }
         ]
@@ -294,11 +320,29 @@ export default function RecordScreen() {
       return;
     }
 
-    const payload = {
+    const targetPace =
+      mode === "ride"
+        ? TRAINING_GOALS.rideTargetPaceMinPerKm
+        : TRAINING_GOALS.runTargetPaceMinPerKm;
+    const payload: PendingSave = {
       distance,
       duration,
+      goal: {
+        targetDistanceMeters: Math.max(Math.round(distance), DEMO_USER_PROFILE.targetDistanceMeters),
+        targetPaceMinPerKm: targetPace,
+        targetTimeMs: Math.round(targetPace * 60000 * (Math.max(distance, 1) / 1000))
+      },
+      mode,
       points: finalPoints,
-      startedAt
+      source: "recorded",
+      startedAt,
+      summary: summarizeTelemetry(finalPoints, distance, duration),
+      title: `${mode === "ride" ? "Ride" : "Run"} ${new Date(startedAt).toLocaleDateString()}`,
+      weather: {
+        condition: "Live capture",
+        temperatureF: 66,
+        windMph: 7
+      }
     };
 
     pendingSaveRef.current = payload;
@@ -353,6 +397,26 @@ export default function RecordScreen() {
         </View>
       ) : null}
       <View style={styles.bottomBar}>
+        <View style={styles.modeRow}>
+          <Pressable
+            disabled={isRecording}
+            style={[styles.modeButton, mode === "run" ? styles.activeModeButton : null]}
+            onPress={() => setMode("run")}
+          >
+            <Text style={[styles.modeText, mode === "run" ? styles.activeModeText : null]}>
+              Run
+            </Text>
+          </Pressable>
+          <Pressable
+            disabled={isRecording}
+            style={[styles.modeButton, mode === "ride" ? styles.activeModeButton : null]}
+            onPress={() => setMode("ride")}
+          >
+            <Text style={[styles.modeText, mode === "ride" ? styles.activeModeText : null]}>
+              Ride
+            </Text>
+          </Pressable>
+        </View>
         <View style={styles.stats}>
           <View>
             <Text style={styles.label}>Time</Text>
@@ -367,6 +431,10 @@ export default function RecordScreen() {
             <Text style={styles.value}>
               {formatPace(recordedPoints[recordedPoints.length - 1]?.pace ?? null)}
             </Text>
+          </View>
+          <View>
+            <Text style={styles.label}>HR</Text>
+            <Text style={styles.value}>{bpm} bpm</Text>
           </View>
         </View>
         <Pressable
@@ -399,6 +467,12 @@ export default function RecordScreen() {
 }
 
 const styles = StyleSheet.create({
+  activeModeButton: {
+    backgroundColor: "#0F172A"
+  },
+  activeModeText: {
+    color: "#FFFFFF"
+  },
   centered: {
     alignItems: "center",
     flex: 1,
@@ -454,6 +528,23 @@ const styles = StyleSheet.create({
   map: {
     flex: 1
   },
+  modeButton: {
+    alignItems: "center",
+    borderColor: "#CBD5E1",
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    paddingVertical: 9
+  },
+  modeRow: {
+    flexDirection: "row",
+    gap: 10
+  },
+  modeText: {
+    ...TYPOGRAPHY.caption,
+    color: "#0F172A",
+    fontWeight: "800"
+  },
   permissionTitle: {
     ...TYPOGRAPHY.body,
     color: "#111827",
@@ -489,6 +580,8 @@ const styles = StyleSheet.create({
   },
   stats: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 14,
     justifyContent: "space-between"
   },
   stopButton: {

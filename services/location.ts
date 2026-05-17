@@ -4,6 +4,9 @@ export type Coord = {
   lat: number;
   lng: number;
   accuracy: number;
+  elevation: number | null;
+  heading: number | null;
+  speed: number | null;
 };
 
 export async function requestLocationPermission(): Promise<boolean> {
@@ -35,8 +38,11 @@ export function startWatchingLocation(callback: (coord: Coord) => void): () => v
     (location) => {
       const coord = {
         accuracy: location.coords.accuracy ?? 0,
+        elevation: location.coords.altitude,
+        heading: location.coords.heading,
         lat: location.coords.latitude,
-        lng: location.coords.longitude
+        lng: location.coords.longitude,
+        speed: location.coords.speed
       };
 
       console.log("[GhostStrategist] location watch received coordinate", coord);
