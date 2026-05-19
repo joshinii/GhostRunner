@@ -2,7 +2,8 @@
 
 **Course**: CMPE 277 Smartphone Application Development  
 **Institution**: San Jose State University  
-**Platform**: iOS (Expo / React Native)
+**Team**: Jaya Vyas | Joshini Naagraj | Mohsen Minai  
+**Platform**: iOS — native app: Swift / SwiftUI / MapKit; backend layer: Expo / React Native / TypeScript / Firebase
 
 ---
 
@@ -114,8 +115,8 @@
 **Implemented in**: `constants/config.ts (COACHING_CONFIG.minIntervalMs)`, `screens/RaceScreen.tsx`
 
 ### NFR-04 — Platform
-**Requirement**: The app shall target iOS only, using Expo SDK 52 and React Native's New Architecture.  
-**Implemented in**: `app.json`, `eas.json`
+**Requirement**: The app shall target iOS only. The native demo app uses Swift 6 / SwiftUI / MapKit (Xcode 16, iOS 18.4). The backend integration layer uses Expo SDK 52 / React Native / TypeScript with Firebase.  
+**Implemented in**: `GhostRunner/GhostRunner.xcodeproj`, `app.json`, `eas.json`
 
 ### NFR-05 — Type Safety
 **Requirement**: All source files shall pass TypeScript strict mode checks with zero errors.  

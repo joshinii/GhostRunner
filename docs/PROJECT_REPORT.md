@@ -552,7 +552,19 @@ it("removes outlier points above accuracy threshold", () => {
 
 ---
 
-## Appendix A — System Architecture Diagram
+## Appendix A — Supporting Documents
+
+| Document | Location | Contents |
+|---|---|---|
+| Requirements Spec | `docs/REQUIREMENTS.md` | FR-01 – FR-17 functional requirements, NFR-01 – NFR-10 non-functional requirements |
+| API Contract | `docs/API.md` | Firebase Cloud Function request schema (13 fields), response schema, error codes |
+| Design Patterns | `docs/DESIGN_PATTERNS.md` | Observer, Strategy, Builder, Repository, Singleton, Facade, State, Adapter |
+| Performance | `docs/PERFORMANCE.md` | O(log n) binary search table, RAF loop, debounce, 48-pt downsampling |
+| Deployment | `DEPLOYMENT.md` | Xcode run instructions, Firebase emulator, OpenAI key setup |
+
+---
+
+## Appendix B — System Architecture Diagram
 
 See `docs/architecture-diagram.mermaid` for the full component diagram.
 
@@ -577,7 +589,7 @@ Firebase Backend (TypeScript)
 └── Firestore: sessions collection
 ```
 
-## Appendix B — ORA Loop Sequence
+## Appendix C — ORA Loop Sequence
 
 ```
 Every 8 seconds during a race:
@@ -608,7 +620,7 @@ Every 8 seconds during a race:
    → agentVotes panel updates all 6 rows with confidence %
 ```
 
-## Appendix C — Screenshot Index
+## Appendix D — Screenshot Index
 
 | File | Screen | What it shows |
 |---|---|---|
