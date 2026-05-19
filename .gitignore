@@ -1,8 +1,50 @@
+# ── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
+functions/node_modules/
+
+# ── Expo ─────────────────────────────────────────────────────────────────────
 .expo/
-.DS_Store
+dist/
+web-build/
+
+# ── iOS / Xcode ───────────────────────────────────────────────────────────────
 build/
 *.xcuserstate
 xcuserdata/
 GhostRunner.xcodeproj/project.xcworkspace/xcuserdata/
 GhostRunner.xcodeproj/xcuserdata/
+ios/Pods/
+*.ipa
+
+# ── Firebase ──────────────────────────────────────────────────────────────────
+firebase-debug.log
+firestore-debug.log
+functions/lib/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+google-services.json
+GoogleService-Info.plist
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Test output ───────────────────────────────────────────────────────────────
+coverage/
+jest-results.json
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
