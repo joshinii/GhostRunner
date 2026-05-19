@@ -2,13 +2,42 @@
 
 ## Prerequisites
 
-- **Apple Developer Account** — required for iOS builds and TestFlight distribution
-- **Expo Account** — sign up at https://expo.dev; run `npx expo login`
+- **Xcode 16+** — install from the Mac App Store
+- **iOS Simulator** — included with Xcode (target: iPhone 17 Pro, iOS 18.4)
 - **Node.js** v18+ and npm
-- **EAS CLI** — installed automatically via `npx eas-cli`
 - **Firebase CLI** — `npm install -g firebase-tools` then `firebase login`
+- **Apple Developer Account** — required for physical device or TestFlight builds only
 
-## Local Development
+---
+
+## Primary: Native Swift App (Xcode)
+
+This is the main demo app. No extra dependencies — MapKit and SwiftUI are system frameworks.
+
+### Run on Simulator
+
+```bash
+open GhostRunner/GhostRunner.xcodeproj
+# Then: Product → Run  (⌘R)
+# Target: iPhone 17 Pro Simulator, iOS 18.4
+```
+
+First launch: the app attempts road-snapping via MKDirections. If the network is unavailable it falls back to straight-line waypoints automatically.
+
+### Run on Physical Device
+
+1. Connect iPhone via USB
+2. In Xcode: select your device as the run target
+3. Sign the app: Signing & Capabilities → Team → select your Apple ID
+4. ⌘R to build and install
+
+---
+
+## Secondary: Expo / React Native App
+
+Used for the TypeScript backend integration layer and Jest test suite.
+
+### Local Development
 
 ```bash
 npm install
