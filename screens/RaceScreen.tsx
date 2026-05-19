@@ -69,7 +69,7 @@ import { TYPOGRAPHY } from "../theme";
 
 const COUNTDOWN_START = 3;
 const REGION_DELTA = 0.01;
-const RENDER_INTERVAL_MS = 16;
+const RENDER_INTERVAL_MS = 200;
 const HUD_INTERVAL_MS = 1000;
 const COACHING_CARD_BOTTOM_SPACING = 12;
 
@@ -474,12 +474,16 @@ export default function RaceScreen() {
       cleanup = startWatchingLocation((nextCoord) => {
         userCoordRef.current = nextCoord;
         setUserCoord(nextCoord);
-        mapRef.current?.animateToRegion({
-          latitude: nextCoord.lat,
-          latitudeDelta: REGION_DELTA,
-          longitude: nextCoord.lng,
-          longitudeDelta: REGION_DELTA
-        });
+        const prevPoint = lastUserPointRef.current;
+        const movedEnough = prevPoint === null || getDistanceMeters(prevPoint, nextCoord) > 5;
+        if (movedEnough) {
+          mapRef.current?.animateToRegion({
+            latitude: nextCoord.lat,
+            latitudeDelta: REGION_DELTA,
+            longitude: nextCoord.lng,
+            longitudeDelta: REGION_DELTA
+          });
+        }
 
         if (!raceActiveRef.current) {
           return;
@@ -607,6 +611,12 @@ export default function RaceScreen() {
 
         userCoordRef.current = demoCoord;
         setUserCoord(demoCoord);
+        mapRef.current?.animateToRegion({
+          latitude: demoCoord.lat,
+          latitudeDelta: REGION_DELTA,
+          longitude: demoCoord.lng,
+          longitudeDelta: REGION_DELTA
+        });
         totalDistanceRef.current = Math.min(
           session.distance * (userElapsed / session.duration),
           session.distance
@@ -660,7 +670,7 @@ export default function RaceScreen() {
     return () => {
       stopRaceLoops();
     };
-  }, [countdown, isDemoRace, isRacing, isSessionLoading, points, session]);
+  }, [countdown, isDemoRace, isSessionLoading, points, session]);
 
   if (isSessionLoading) {
     return (
@@ -726,7 +736,6 @@ export default function RaceScreen() {
         ) : null}
         {ghostMarker ? (
           <Marker
-            key={`ghost-${ghostMarkerTick}`}
             coordinate={{
               latitude: ghostMarker.lat,
               longitude: ghostMarker.lng
