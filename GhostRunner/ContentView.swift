@@ -288,7 +288,30 @@ private struct LiveRaceView: View {
             SnapshotRow(label: "Ghost interpolation", value: "60 fps map animation from 1 Hz samples")
             SnapshotRow(label: "Packet loss handling", value: race.packetLossState)
             SnapshotRow(label: "Intensity zone", value: race.hrZone)
-            SnapshotRow(label: "Last tool used", value: race.currentDecision.tool)
+            SnapshotRow(label: "Active agents", value: "\(race.activeAgentCount) / 6 triggered")
+            SnapshotRow(label: "Primary agent", value: race.currentDecision.tool)
+            if !race.agentVotes.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Agent votes")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.gsMuted)
+                        .frame(width: 130, alignment: .leading)
+                    ForEach(race.agentVotes, id: \.agentName) { vote in
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(vote.triggered ? vote.severity.color : Color.gsMuted.opacity(0.3))
+                                .frame(width: 6, height: 6)
+                            Text(vote.agentName)
+                                .font(.caption2)
+                                .foregroundStyle(vote.triggered ? Color.gsText : Color.gsMuted)
+                            Spacer()
+                            Text(vote.triggered ? String(format: "%.0f%%", vote.confidence * 100) : "—")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(vote.triggered ? vote.severity.color : Color.gsMuted)
+                        }
+                    }
+                }
+            }
         }
         .panelStyle()
     }
@@ -455,6 +478,7 @@ private final class RaceViewModel: ObservableObject {
         severity: .hold,
         tool: "Snapshot Builder"
     )
+    @Published var agentVotes: [AgentVote] = []
     @Published var mapPosition: MapCameraPosition
     @Published var route: [TelemetryPoint]
     @Published var isRouteSnapped = false
@@ -462,6 +486,7 @@ private final class RaceViewModel: ObservableObject {
     let sessions: [PastSession]
     let feedbackValues: [Double] = [0.42, 0.48, 0.55, 0.58, 0.66, 0.71, 0.75, 0.78]
 
+    private let orchestrator = AgentOrchestrator()
     private var currentMapRegion: MKCoordinateRegion
     private var lastDecisionSecond = 0
     private var userAdjustedMap = false
@@ -576,6 +601,15 @@ private final class RaceViewModel: ObservableObject {
         elapsedSeconds % 37 > 30 ? "simulated tunnel gap - interpolating ghost" : "normal stream"
     }
 
+    var simulatedWindMph: Double {
+        let progress = Double(elapsedSeconds) / Double(max(1, route.count))
+        return 8 + sin(progress * .pi * 2) * 9
+    }
+
+    var activeAgentCount: Int {
+        agentVotes.filter(\.triggered).count
+    }
+
     func tick() {
         guard isRunning else { return }
         elapsedSeconds += 1
@@ -685,43 +719,16 @@ private final class RaceViewModel: ObservableObject {
     }
 
     private func makeDecision() -> StrategyDecision {
-        if heartRate >= 174 {
-            return StrategyDecision(
-                text: "Bio-Guard: ease off now. Drop effort for 45 seconds and let heart rate settle before chasing the ghost.",
-                severity: .danger,
-                tool: "Bio-Guard"
-            )
-        }
-
-        if elevationAhead > 25 && gapMeters < 45 {
-            return StrategyDecision(
-                text: "Small climb ahead. Increase cadence now, then hold form over the top instead of sprinting on the hill.",
-                severity: .push,
-                tool: "Upcoming Elevation Scan"
-            )
-        }
-
-        if gapMeters > 55 {
-            return StrategyDecision(
-                text: "The ghost is opening the gap. Add a controlled 20-second surge, then return to target pace.",
-                severity: .push,
-                tool: "Dynamic Pacer"
-            )
-        }
-
-        if heartRate > 160 {
-            return StrategyDecision(
-                text: "Hold this effort. You are near threshold, so protect breathing rhythm before the next move.",
-                severity: .recover,
-                tool: "Heart Rate Analysis"
-            )
-        }
-
-        return StrategyDecision(
-            text: "Good position. Stay relaxed and keep the ghost within five seconds through this flat section.",
-            severity: .hold,
-            tool: "Predict Finish Time"
+        let state = RaceState(
+            heartRate: heartRate,
+            elevationAhead: elevationAhead,
+            gapMeters: gapMeters,
+            elapsedSeconds: elapsedSeconds,
+            windMph: simulatedWindMph
         )
+        let (decision, votes) = orchestrator.decide(state)
+        agentVotes = votes
+        return decision
     }
 }
 
@@ -744,6 +751,124 @@ private struct StrategyDecision {
     let text: String
     let severity: DecisionSeverity
     let tool: String
+    let contributingAgents: [String]
+
+    init(text: String, severity: DecisionSeverity, tool: String, contributingAgents: [String] = []) {
+        self.text = text
+        self.severity = severity
+        self.tool = tool
+        self.contributingAgents = contributingAgents
+    }
+}
+
+// MARK: - Multi-Agent Architecture
+
+private struct RaceState {
+    let heartRate: Int
+    let elevationAhead: Int
+    let gapMeters: Double
+    let elapsedSeconds: Int
+    let windMph: Double
+}
+
+private struct AgentVote {
+    let agentName: String
+    let severity: DecisionSeverity
+    let text: String
+    let confidence: Double
+    let triggered: Bool
+}
+
+private struct BioGuardAgent {
+    let name = "Bio-Guard"
+    func evaluate(_ state: RaceState) -> AgentVote {
+        let triggered = state.heartRate >= 174
+        let confidence = triggered ? min(1.0, Double(state.heartRate - 174) / 12.0 + 0.85) : 0
+        return AgentVote(agentName: name, severity: .danger,
+            text: "Bio-Guard: ease off now. Drop effort for 45 seconds and let heart rate settle before chasing the ghost.",
+            confidence: confidence, triggered: triggered)
+    }
+}
+
+private struct HeartRateAnalysisAgent {
+    let name = "Heart Rate Analysis"
+    func evaluate(_ state: RaceState) -> AgentVote {
+        let triggered = state.heartRate > 160 && state.heartRate < 174
+        let confidence = triggered ? min(0.75, Double(state.heartRate - 160) / 14.0 * 0.75) : 0
+        return AgentVote(agentName: name, severity: .recover,
+            text: "Hold this effort. You are near threshold — protect breathing rhythm before the next move.",
+            confidence: confidence, triggered: triggered)
+    }
+}
+
+private struct ElevationScanAgent {
+    let name = "Upcoming Elevation Scan"
+    func evaluate(_ state: RaceState) -> AgentVote {
+        let triggered = state.elevationAhead > 25 && state.gapMeters < 45
+        let confidence = triggered ? min(0.85, Double(state.elevationAhead) / 60.0 * 0.85) : 0
+        return AgentVote(agentName: name, severity: .push,
+            text: "Climb ahead. Increase cadence now, then hold form over the top instead of sprinting the hill.",
+            confidence: confidence, triggered: triggered)
+    }
+}
+
+private struct DynamicPacerAgent {
+    let name = "Dynamic Pacer"
+    func evaluate(_ state: RaceState) -> AgentVote {
+        let triggered = state.gapMeters > 55
+        let confidence = triggered ? min(0.9, (state.gapMeters - 55) / 60.0 * 0.9) : 0
+        return AgentVote(agentName: name, severity: .push,
+            text: "The ghost is opening the gap. Add a controlled 20-second surge, then return to target pace.",
+            confidence: confidence, triggered: triggered)
+    }
+}
+
+private struct WeatherAnalystAgent {
+    let name = "Terrain and Weather Analyst"
+    func evaluate(_ state: RaceState) -> AgentVote {
+        let triggered = state.windMph >= 14
+        let confidence = triggered ? min(0.7, (state.windMph - 14) / 10.0 * 0.3 + 0.4) : 0
+        return AgentVote(agentName: name, severity: .hold,
+            text: "Headwind detected. Stay smooth and maintain steady effort — don't fight the wind.",
+            confidence: confidence, triggered: triggered)
+    }
+}
+
+private struct FinishPredictorAgent {
+    let name = "Predict Finish Time"
+    func evaluate(_ state: RaceState) -> AgentVote {
+        AgentVote(agentName: name, severity: .hold,
+            text: "Good position. Stay relaxed and keep the ghost within five seconds through this flat section.",
+            confidence: 0.3, triggered: true)
+    }
+}
+
+private struct AgentOrchestrator {
+    func decide(_ state: RaceState) -> (decision: StrategyDecision, votes: [AgentVote]) {
+        let votes = [
+            BioGuardAgent().evaluate(state),
+            HeartRateAnalysisAgent().evaluate(state),
+            ElevationScanAgent().evaluate(state),
+            DynamicPacerAgent().evaluate(state),
+            WeatherAnalystAgent().evaluate(state),
+            FinishPredictorAgent().evaluate(state)
+        ]
+
+        // Bio-Guard safety override always wins
+        if let bio = votes.first(where: { $0.agentName == "Bio-Guard" && $0.triggered }) {
+            let supporting = votes.filter { $0.triggered && $0.agentName != bio.agentName }.map(\.agentName)
+            return (StrategyDecision(text: bio.text, severity: bio.severity,
+                tool: bio.agentName, contributingAgents: supporting), votes)
+        }
+
+        // Otherwise pick highest-confidence triggered agent
+        let triggered = votes.filter(\.triggered)
+        let winner = triggered.max(by: { $0.confidence < $1.confidence }) ?? votes.last!
+        let supporting = triggered.filter { $0.agentName != winner.agentName }.map(\.agentName)
+
+        return (StrategyDecision(text: winner.text, severity: winner.severity,
+            tool: winner.agentName, contributingAgents: supporting), votes)
+    }
 }
 
 private enum DecisionSeverity {
@@ -1212,6 +1337,19 @@ private struct CoachingBanner: View {
                     .font(.subheadline)
                     .foregroundStyle(Color.gsText)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if !decision.contributingAgents.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.caption2)
+                            .foregroundStyle(Color.gsMuted)
+                        Text("Also active: \(decision.contributingAgents.joined(separator: " · "))")
+                            .font(.caption2)
+                            .foregroundStyle(Color.gsMuted)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                }
             }
         }
         .padding(16)
