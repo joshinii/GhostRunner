@@ -1,7 +1,7 @@
 # Ghost Strategist — Project Report
 **CMPE 277 Smartphone App Development**
 **San José State University | Prof. Chandrasekar Vuppalapati**
-**Student: Jaya Vyas | jaya.vyas@sjsu.edu**
+**Team: Jaya Vyas | Joshini Naagraj | Mohsen Minai**
 
 ---
 
@@ -535,20 +535,20 @@ it("removes outlier points above accuracy threshold", () => {
 
 | Member | Role | Contributions |
 |---|---|---|
-| **Jaya Vyas** | Lead Developer & Architect | Full-stack implementation: SwiftUI multi-agent UI, ghost engine, coaching pipeline, data engineering, Firebase backend, 96 Jest tests, design patterns, performance benchmarks, diagrams, documentation |
-
-**Note**: This is a solo project. All implementation, design, testing, and documentation was produced by Jaya Vyas.
+| **Jaya Vyas** | iOS Lead & Multi-Agent Architecture | SwiftUI app (all 3 tabs), multi-agent orchestrator (6 agents + Bio-Guard override), coaching banner with "Also active" line, agent votes panel, race map with ghost/user markers, demo route builder, performance benchmarks, project report |
+| **Joshini Naagraj** | Backend & Data Engineering | Firebase Cloud Functions (`getCoachingInstruction`), OpenAI integration with heuristic fallback, Firestore session storage, GPS smoothing pipeline (EMA + outlier filtering + gap interpolation), weekly trend analysis, pace zone distribution |
+| **Mohsen Minai** | Testing, Analytics & Documentation | 96 Jest tests across 7 suites, race narrative generator, feedback loop and coaching effectiveness analysis, session format utilities, data quality scoring, design patterns documentation, architecture/sequence/data-flow diagrams, deployment configuration |
 
 ### Implementation Timeline
 
-| Milestone | Deliverable |
-|---|---|
-| Sprint 1 | Ghost engine, binary search interpolation, basic race UI |
-| Sprint 2 | Firebase backend, OpenAI coaching integration, heuristic fallback |
-| Sprint 3 | Multi-agent architecture (6 agents + orchestrator), Bio-Guard override |
-| Sprint 4 | SwiftUI native app, agent votes panel, coaching banner with "Also active" |
-| Sprint 5 | Data pipeline, race narrative, feedback loop, 96 Jest tests, benchmarks |
-| Sprint 6 | Screenshots, diagrams, design patterns documentation, project report |
+| Milestone | Lead | Deliverable |
+|---|---|---|
+| Sprint 1 | Joshini | Ghost engine, binary search interpolation, basic race UI |
+| Sprint 2 | Joshini | Firebase backend, OpenAI coaching integration, heuristic fallback |
+| Sprint 3 | Jaya | Multi-agent architecture (6 agents + orchestrator), Bio-Guard override |
+| Sprint 4 | Jaya | SwiftUI native app, agent votes panel, coaching banner with "Also active" |
+| Sprint 5 | Mohsen | Data pipeline, race narrative, feedback loop, 96 Jest tests, benchmarks |
+| Sprint 6 | Mohsen | Screenshots, diagrams, design patterns documentation, project report |
 
 ---
 
