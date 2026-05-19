@@ -535,20 +535,20 @@ it("removes outlier points above accuracy threshold", () => {
 
 | Member | Role | Contributions |
 |---|---|---|
-| **Jaya Vyas** | iOS Lead & Multi-Agent Architecture | SwiftUI app (all 3 tabs), multi-agent orchestrator (6 agents + Bio-Guard override), coaching banner with "Also active" line, agent votes panel, race map with ghost/user markers, demo route builder, performance benchmarks, project report |
-| **Joshini Naagraj** | Backend & Data Engineering | Firebase Cloud Functions (`getCoachingInstruction`), OpenAI integration with heuristic fallback, Firestore session storage, GPS smoothing pipeline (EMA + outlier filtering + gap interpolation), weekly trend analysis, pace zone distribution |
-| **Mohsen Minai** | Testing, Analytics & Documentation | 96 Jest tests across 7 suites, race narrative generator, feedback loop and coaching effectiveness analysis, session format utilities, data quality scoring, design patterns documentation, architecture/sequence/data-flow diagrams, deployment configuration |
+| **Jaya Vyas** | Mobile Developer | SwiftUI race screen, coaching banner, agent votes panel, race map with ghost/user markers, Bio-Guard safety override UI, demo route builder, 27 Jest tests (agentTools, geo) |
+| **Joshini Naagraj** | Full-Stack Developer | Firebase Cloud Functions, OpenAI integration with heuristic fallback, Firestore session storage, ghost engine binary search interpolation, GPS smoothing pipeline (EMA + outlier filtering + gap interpolation), 32 Jest tests (ghostEngine, raceAnalytics, dataEngineering) |
+| **Mohsen Minai** | Full-Stack Developer | SwiftUI dashboard and history tabs, multi-agent orchestrator (6 agents + confidence scoring), race narrative generator, feedback loop and coaching effectiveness analysis, data quality scoring, weekly trend analysis, 37 Jest tests (sessionFormat, functions), architecture diagrams, deployment configuration |
 
 ### Implementation Timeline
 
-| Milestone | Lead | Deliverable |
+| Sprint | Owner | Deliverable |
 |---|---|---|
-| Sprint 1 | Joshini | Ghost engine, binary search interpolation, basic race UI |
-| Sprint 2 | Joshini | Firebase backend, OpenAI coaching integration, heuristic fallback |
-| Sprint 3 | Jaya | Multi-agent architecture (6 agents + orchestrator), Bio-Guard override |
-| Sprint 4 | Jaya | SwiftUI native app, agent votes panel, coaching banner with "Also active" |
-| Sprint 5 | Mohsen | Data pipeline, race narrative, feedback loop, 96 Jest tests, benchmarks |
-| Sprint 6 | Mohsen | Screenshots, diagrams, design patterns documentation, project report |
+| Sprint 1 | Joshini | Ghost engine, binary search interpolation, Firestore session storage |
+| Sprint 2 | Joshini | Firebase Cloud Functions, OpenAI integration, GPS smoothing pipeline |
+| Sprint 3 | Mohsen | Multi-agent orchestrator (6 agents), confidence scoring, Bio-Guard logic |
+| Sprint 4 | Jaya | SwiftUI race screen, agent votes panel, coaching banner, race map |
+| Sprint 5 | Jaya + Mohsen | Data pipeline UI, race narrative, feedback loop, Jest test suites |
+| Sprint 6 | Mohsen | Dashboard and history tabs, diagrams, deployment config, project report |
 
 ---
 
