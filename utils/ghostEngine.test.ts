@@ -24,4 +24,38 @@ describe("ghostPosition", () => {
   it("interpolates along first segment", () => {
     expect(ghostPosition(samplePoints, 1000)).toEqual({ lat: 15, lng: 30 });
   });
+
+  it("handles 100+ point arrays with correct binary search", () => {
+    const points: GhostPoint[] = Array.from({ length: 150 }, (_, i) => ({
+      lat: i,
+      lng: i * 2,
+      timestamp: i * 1000
+    }));
+    const result = ghostPosition(points, 50000);
+    expect(result.lat).toBeCloseTo(50);
+    expect(result.lng).toBeCloseTo(100);
+  });
+
+  it("returns exact point when elapsed time lands on a boundary", () => {
+    // points[0].timestamp=1000, so elapsed=2000 → target=3000 which is exactly points[1]
+    const result = ghostPosition(samplePoints, 2000);
+    expect(result).toEqual({ lat: 20, lng: 40 });
+  });
+
+  it("handles very small time differences between points", () => {
+    const tinyPoints: GhostPoint[] = [
+      { lat: 0, lng: 0, timestamp: 0 },
+      { lat: 1, lng: 1, timestamp: 1 }
+    ];
+    const result = ghostPosition(tinyPoints, 0);
+    expect(result.lat).toBeCloseTo(0);
+  });
+
+  it("handles two points with identical timestamps gracefully", () => {
+    const dupPoints: GhostPoint[] = [
+      { lat: 5, lng: 10, timestamp: 1000 },
+      { lat: 5, lng: 10, timestamp: 1000 }
+    ];
+    expect(() => ghostPosition(dupPoints, 500)).not.toThrow();
+  });
 });

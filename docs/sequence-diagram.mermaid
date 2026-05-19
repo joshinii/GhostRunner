@@ -1,0 +1,42 @@
+sequenceDiagram
+    actor User
+    participant RaceScreen
+    participant GhostEngine
+    participant LocationService
+    participant CoachingService
+    participant CloudFunction
+    participant Firestore
+
+    User->>RaceScreen: Tap "Race This Ghost"
+    RaceScreen->>RaceScreen: Countdown 3-2-1
+
+    loop Every 1 second
+        LocationService-->>RaceScreen: GPS update (lat, lng, accuracy)
+        RaceScreen->>GhostEngine: ghostPosition(points, elapsedMs)
+        GhostEngine-->>RaceScreen: ghost {lat, lng}
+        RaceScreen->>RaceScreen: Compute distance, gap, pace
+        RaceScreen->>RaceScreen: Update map markers and HUD
+    end
+
+    loop Every 15 seconds
+        RaceScreen->>RaceScreen: Build AgentSnapshot
+        RaceScreen->>CoachingService: getCoachingInstruction(snapshot)
+        CoachingService->>CloudFunction: callable(snapshot)
+        CloudFunction-->>CoachingService: CoachingInstruction
+        CoachingService-->>RaceScreen: instruction
+        RaceScreen->>RaceScreen: Show CoachingCard
+        RaceScreen->>RaceScreen: expo-speech.speak(instruction)
+    end
+
+    alt Bio-Guard Triggered (HR > 185)
+        RaceScreen->>RaceScreen: Pause ghost
+        RaceScreen->>CoachingService: getCoachingInstruction (forced)
+        CoachingService-->>RaceScreen: danger instruction
+        RaceScreen->>RaceScreen: Show danger CoachingCard
+        RaceScreen->>RaceScreen: Resume ghost when HR < 170
+    end
+
+    User->>RaceScreen: Crosses finish line
+    RaceScreen->>RaceScreen: Show race result modal
+    RaceScreen->>Firestore: saveRaceResult(sessionId, result, events)
+    Firestore-->>RaceScreen: confirmed

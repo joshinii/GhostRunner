@@ -13,6 +13,8 @@
       "backgroundColor": "#FFFFFF"
     },
     "ios": {
+      "bundleIdentifier": "edu.sjsu.cmpe277.ghoststrategist",
+      "buildNumber": "1",
       "icon": "./assets/icon.png",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "GhostStrategist uses your location to record runs and race past routes."

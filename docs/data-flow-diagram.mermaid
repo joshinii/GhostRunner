@@ -1,0 +1,21 @@
+flowchart TD
+    GPS["GPS Sensor\n(expo-location)"] --> LocService["Location Service\nservices/location.ts"]
+    MockHR["Mock Heart Rate\nhooks/useMockHeartRate.ts"] --> SnapshotBuilder
+
+    LocService --> SnapshotBuilder["Snapshot Builder\nRaceScreen — maybeRequestCoaching"]
+    GhostEngine["Ghost Engine\nutils/ghostEngine.ts"] --> SnapshotBuilder
+    Config["Constants / Config\nconstants/config.ts"] --> SnapshotBuilder
+
+    SnapshotBuilder --> CoachingService["Coaching Service\nservices/coaching.ts"]
+    CoachingService -- "Firebase callable" --> CloudFn["Cloud Function\nfunctions/src/index.ts"]
+    CoachingService -- "local fallback" --> AgentTools["Agent Tools\nutils/agentTools.ts"]
+
+    CloudFn -- "optional" --> OpenAI["OpenAI API"]
+    CloudFn --> CoachingCard["CoachingCard\ncomponents/CoachingCard.tsx"]
+    AgentTools --> CoachingCard
+
+    CoachingCard --> TTS["Text-to-Speech\nexpo-speech"]
+
+    SessionRepo["Session Repository\nservices/sessions.ts"] <--> Firestore["Firestore\nFirebase"]
+    SessionRepo --> HomeScreen["HomeScreen"]
+    SessionRepo --> SessionDetail["SessionDetailScreen"]

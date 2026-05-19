@@ -61,6 +61,10 @@ import {
   formatPace,
   formatSessionDuration
 } from "../utils/sessionFormat";
+import {
+  analyzeCoachingEffectiveness,
+  getCoachingPersonalization
+} from "../services/feedbackLoop";
 import { TYPOGRAPHY } from "../theme";
 
 const COUNTDOWN_START = 3;
@@ -220,6 +224,13 @@ export default function RaceScreen() {
 
     const pace = currentPaceRef.current ?? session.summary.averagePace ?? getTargetPace(session.mode);
     const timeGapSeconds = estimateTimeGapSeconds(gapMeters ?? 0, pace);
+
+    const pastEffectiveness = analyzeCoachingEffectiveness(
+      coachingEventsRef.current,
+      session.points
+    );
+    const { pushFrequency, severityBias } = getCoachingPersonalization(pastEffectiveness);
+
     const snapshot = {
       distanceRemaining: Math.max(session.distance - totalDistanceRef.current, 0),
       elapsedMs,
@@ -233,7 +244,9 @@ export default function RaceScreen() {
       speed: pace > 0 ? 1000 / (pace * 60) : 0,
       targetPace: session.goal?.targetPaceMinPerKm ?? getTargetPace(session.mode),
       timeGapSeconds,
-      weatherWindMph: session.weather?.windMph ?? COACHING_CONFIG.defaultWeatherWindMph
+      weatherWindMph: session.weather?.windMph ?? COACHING_CONFIG.defaultWeatherWindMph,
+      pushFrequency,
+      severityBias
     };
 
     console.log("[GhostStrategist] RaceScreen coaching snapshot built", snapshot);
@@ -249,6 +262,12 @@ export default function RaceScreen() {
       reason: instruction.reason,
       safetyOverride: instruction.safetyOverride,
       severity: instruction.severity,
+      snapshotAtEvent: {
+        elevationAhead: snapshot.elevationAhead,
+        gapMeters: snapshot.gapMeters,
+        heartRate: snapshot.heartRate,
+        pace: snapshot.pace
+      },
       timestamp: now,
       toolUsed: instruction.toolUsed
     };

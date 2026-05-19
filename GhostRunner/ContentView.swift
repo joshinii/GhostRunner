@@ -305,6 +305,7 @@ private struct HistoryView: View {
                     ForEach(race.sessions) { session in
                         SessionCard(session: session)
                     }
+                    dataPipeline
                     feedbackLoop
                 }
                 .padding(16)
@@ -332,6 +333,27 @@ private struct HistoryView: View {
                 .stroke(Color.white.opacity(0.10), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private var dataPipeline: some View {
+        let totalRaw = race.sessions.reduce(0) { $0 + $1.rawPoints }
+        let totalSmoothed = race.sessions.reduce(0) { $0 + $1.smoothedPoints }
+        let totalPacketLoss = race.sessions.reduce(0) { $0 + $1.packetLossEvents }
+        let removed = totalRaw - totalSmoothed
+
+        return VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "Data Pipeline", icon: "waveform.path")
+            Text("GPS telemetry passes through a smoothing pipeline before analytics. Outlier points (accuracy > 50 m) are removed and gaps > 3 s are interpolated.")
+                .font(.subheadline)
+                .foregroundStyle(Color.gsMuted)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                PipelineTile(label: "Raw points", value: "\(totalRaw)")
+                PipelineTile(label: "After smoothing", value: "\(totalSmoothed)")
+                PipelineTile(label: "Outliers removed", value: "\(removed)")
+                PipelineTile(label: "Packet loss events", value: "\(totalPacketLoss)")
+            }
+        }
+        .panelStyle()
     }
 
     private var feedbackLoop: some View {
@@ -788,6 +810,10 @@ private struct PastSession: Identifiable {
     let quality: String
     let notes: String
     let chart: [Double]
+    let narrative: [String]
+    let rawPoints: Int
+    let smoothedPoints: Int
+    let packetLossEvents: Int
 }
 
 private enum DemoRouteBuilder {
@@ -879,7 +905,16 @@ private enum DemoRouteBuilder {
                 avgHR: "158 bpm",
                 quality: "98%",
                 notes: "Best split after the second hill. Ghost target is stored for replay.",
-                chart: [0.72, 0.67, 0.64, 0.61, 0.56, 0.54, 0.52, 0.50]
+                chart: [0.72, 0.67, 0.64, 0.61, 0.56, 0.54, 0.52, 0.50],
+                narrative: [
+                    "At 3:12, Upcoming Elevation Scan detected a 28 ft climb. The agent issued a Push advisory to build a gap before the hill.",
+                    "At 8:45, heart rate reached 171 bpm (91% of max). Bio-Guard switched the agent to Recovery mode for 45 seconds.",
+                    "Between 12:00–18:00, the agent issued 3 Push advisories closing a 55 m gap. Pace improved from 8:02 to 7:31 /mi.",
+                    "Final result: finished 12 seconds ahead of the ghost with 6 coaching interventions."
+                ],
+                rawPoints: 1448,
+                smoothedPoints: 1445,
+                packetLossEvents: 1
             ),
             PastSession(
                 title: "Guadalupe River Ride",
@@ -890,7 +925,16 @@ private enum DemoRouteBuilder {
                 avgHR: "146 bpm",
                 quality: "95%",
                 notes: "Wind-adjusted strategist held the ghost on the return section.",
-                chart: [0.35, 0.39, 0.44, 0.48, 0.51, 0.57, 0.61, 0.66]
+                chart: [0.35, 0.39, 0.44, 0.48, 0.51, 0.57, 0.61, 0.66],
+                narrative: [
+                    "At 5:20, Terrain and Weather Analyst detected 16 mph headwind. The agent issued a Hold advisory to conserve effort.",
+                    "At 18:00, the tailwind return leg began. The agent issued 2 Push advisories, reducing the ghost gap from 48 m to 11 m.",
+                    "At 28:15, heart rate reached 163 bpm (87% of max). Heart Rate Analysis suppressed a Push recommendation.",
+                    "Final result: finished 4 seconds behind the ghost with 5 coaching interventions."
+                ],
+                rawPoints: 2081,
+                smoothedPoints: 2074,
+                packetLossEvents: 2
             )
         ]
     }
@@ -1239,8 +1283,47 @@ private struct SessionCard: View {
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(Color.gsMuted)
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Race Narrative", systemImage: "text.quote")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.gsGreen)
+                ForEach(session.narrative, id: \.self) { line in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("·")
+                            .foregroundStyle(Color.gsMuted)
+                        Text(line)
+                            .font(.caption)
+                            .foregroundStyle(Color.gsMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
         }
         .panelStyle()
+    }
+}
+
+private struct PipelineTile: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Color.gsMuted)
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(Color.gsText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.gsTile)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 

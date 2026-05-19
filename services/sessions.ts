@@ -51,6 +51,12 @@ export type CoachingEvent = {
   reason: string;
   safetyOverride: boolean;
   severity: "info" | "push" | "hold" | "recover" | "danger" | "caution" | "warning";
+  snapshotAtEvent?: {
+    elevationAhead: number;
+    gapMeters: number;
+    heartRate: number;
+    pace: number;
+  };
   timestamp: number;
   toolUsed: string;
 };

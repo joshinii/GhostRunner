@@ -16,6 +16,7 @@ import { RootStackParamList } from "../navigation/types";
 import { createDemoSessions } from "../services/demoSession";
 import { getSessions, saveSession, Session } from "../services/sessions";
 import { TYPOGRAPHY } from "../theme";
+import { computeWeeklyTrends } from "../utils/dataEngineering";
 import {
   formatHeartRate,
   formatPace,
@@ -31,6 +32,8 @@ export default function HomeScreen() {
   const [isSeedingDemo, setIsSeedingDemo] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const dashboard = useMemo(() => getDashboardMetrics(sessions), [sessions]);
+  const weeklyTrends = useMemo(() => computeWeeklyTrends(sessions), [sessions]);
+  const hasMultipleWeeks = weeklyTrends.length >= 2;
 
   console.log("[GhostStrategist] HomeScreen rendering", {
     isLoading,
@@ -144,6 +147,23 @@ export default function HomeScreen() {
           </Pressable>
         </View>
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        {hasMultipleWeeks && (
+          <View style={styles.trendsCard}>
+            <Text style={styles.sectionTitle}>Weekly Trends</Text>
+            {weeklyTrends.slice(-4).map((week) => (
+              <View key={week.isoWeek} style={styles.trendRow}>
+                <Text style={styles.trendWeek}>{week.isoWeek}</Text>
+                <Text style={styles.trendStat}>{formatSessionDistance(week.totalDistanceMeters)}</Text>
+                <Text style={styles.trendStat}>{week.sessionCount} session{week.sessionCount !== 1 ? "s" : ""}</Text>
+                {week.avgPaceImprovement !== null && (
+                  <Text style={[styles.trendStat, { color: week.avgPaceImprovement < 0 ? "#16A34A" : "#DC2626" }]}>
+                    {week.avgPaceImprovement < 0 ? "▲" : "▼"} pace
+                  </Text>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
         <Text style={styles.sectionTitle}>Race Library</Text>
       </View>
     );
@@ -410,5 +430,28 @@ const styles = StyleSheet.create({
   },
   syncedBadge: {
     backgroundColor: "#DCFCE7"
+  },
+  trendRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 6
+  },
+  trendStat: {
+    ...TYPOGRAPHY.caption,
+    color: "#334155",
+    fontWeight: "700"
+  },
+  trendWeek: {
+    ...TYPOGRAPHY.caption,
+    color: "#64748B",
+    minWidth: 80
+  },
+  trendsCard: {
+    backgroundColor: "#F8FAFC",
+    borderColor: "#E2E8F0",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 4,
+    padding: 14
   }
 });

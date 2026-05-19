@@ -1,0 +1,47 @@
+flowchart TB
+    subgraph Mobile["Mobile — Expo / React Native"]
+        subgraph Screens
+            Home["HomeScreen"]
+            Record["RecordScreen"]
+            Race["RaceScreen"]
+            Detail["SessionDetailScreen"]
+        end
+        subgraph Services
+            LocSvc["location.ts"]
+            CoachSvc["coaching.ts"]
+            SessionSvc["sessions.ts"]
+            FBInit["firebase.ts"]
+        end
+        subgraph Utils
+            GhostEng["ghostEngine.ts"]
+            AgentT["agentTools.ts"]
+            RaceAn["raceAnalytics.ts"]
+            DataEng["dataEngineering.ts"]
+            Narrative["raceNarrative.ts"]
+            Benchmarks["benchmarks.ts"]
+        end
+        subgraph Hooks
+            MockHR["useMockHeartRate.ts"]
+        end
+        subgraph Components
+            CCard["CoachingCard.tsx"]
+        end
+    end
+
+    subgraph Firebase["Firebase (Cloud)"]
+        Firestore["Firestore\n(sessions collection)"]
+        CloudFn["Cloud Functions\ngetCoachingInstruction"]
+    end
+
+    subgraph External["External Services"]
+        OpenAI["OpenAI API\n(gpt-4o-mini)"]
+        AppleMaps["Apple Maps\n(react-native-maps)"]
+        ExpoLoc["expo-location\n(GPS)"]
+        ExpoSpeech["expo-speech\n(TTS)"]
+    end
+
+    Mobile --> Firebase
+    CloudFn --> OpenAI
+    Mobile --> AppleMaps
+    Mobile --> ExpoLoc
+    Mobile --> ExpoSpeech

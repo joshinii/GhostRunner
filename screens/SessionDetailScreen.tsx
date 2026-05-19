@@ -9,6 +9,8 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { RootStackParamList } from "../navigation/types";
 import type { CoachingEvent, SessionPoint } from "../services/sessions";
 import { TYPOGRAPHY } from "../theme";
+import { smoothGPSPoints } from "../utils/dataEngineering";
+import { generateRaceNarrative } from "../utils/raceNarrative";
 import {
   formatElevation,
   formatHeartRate,
@@ -28,6 +30,14 @@ export default function SessionDetailScreen() {
   const heartRateValues = compact(session.points.map((point) => point.heartRate));
   const elevationValues = compact(session.points.map((point) => point.elevation));
   const recentEvents = session.coachingEvents?.slice(-4).reverse() ?? [];
+  const smoothedPoints = smoothGPSPoints(session.points);
+  const pointsRemoved = session.points.length - smoothedPoints.length;
+  const allEvents = session.coachingEvents ?? [];
+  const raceResult = session.raceResults?.[session.raceResults.length - 1];
+  const narrative =
+    allEvents.length > 0 && raceResult
+      ? generateRaceNarrative(allEvents, raceResult, session.duration)
+      : [];
 
   console.log("[GhostStrategist] SessionDetailScreen rendering", {
     sessionId: session.id
@@ -64,6 +74,16 @@ export default function SessionDetailScreen() {
         <Stat label="Packets" value={String(session.summary.packetLossEvents)} />
       </View>
       <View style={styles.band}>
+        <Text style={styles.sectionTitle}>Data Pipeline</Text>
+        <Text style={styles.bodyText}>
+          Raw points: {session.points.length} → After GPS smoothing: {smoothedPoints.length}
+          {pointsRemoved > 0 ? ` (${pointsRemoved} low-accuracy points removed)` : " (all points retained)"}
+        </Text>
+        <Text style={styles.bodyText}>
+          Quality score: {session.summary.dataQualityScore}% | Packet loss events: {session.summary.packetLossEvents}
+        </Text>
+      </View>
+      <View style={styles.band}>
         <Text style={styles.sectionTitle}>Telemetry Analytics</Text>
         <MiniChart color="#007AFF" label="Pace" values={paceValues} />
         <MiniChart color="#DC2626" label="Heart rate" values={heartRateValues} />
@@ -91,6 +111,14 @@ export default function SessionDetailScreen() {
           {session.weather?.temperatureF ?? "--"} F
         </Text>
       </View>
+      {narrative.length > 0 && (
+        <View style={styles.band}>
+          <Text style={styles.sectionTitle}>Race Narrative</Text>
+          {narrative.map((line, index) => (
+            <Text key={index} style={styles.narrativeLine}>{line}</Text>
+          ))}
+        </View>
+      )}
       <Pressable style={styles.button} onPress={handleRacePress}>
         <Text style={styles.buttonText}>Race This Ghost</Text>
       </Pressable>
@@ -283,6 +311,11 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.title,
     color: "#111827",
     fontWeight: "800"
+  },
+  narrativeLine: {
+    ...TYPOGRAPHY.body,
+    color: "#334155",
+    lineHeight: 22
   },
   value: {
     ...TYPOGRAPHY.body,
