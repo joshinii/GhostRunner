@@ -3,6 +3,7 @@
 //  GhostRunner
 //
 
+import AVFoundation
 import Combine
 import MapKit
 import SwiftUI
@@ -319,6 +320,7 @@ private struct LiveRaceView: View {
 
 private struct HistoryView: View {
     @ObservedObject var race: RaceViewModel
+    @State private var selectedSession: PastSession? = nil
 
     var body: some View {
         NavigationStack {
@@ -327,6 +329,7 @@ private struct HistoryView: View {
                     summary
                     ForEach(race.sessions) { session in
                         SessionCard(session: session)
+                            .onTapGesture { selectedSession = session }
                     }
                     dataPipeline
                     feedbackLoop
@@ -337,6 +340,9 @@ private struct HistoryView: View {
             .navigationTitle("History")
             .toolbarBackground(Color.gsBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .sheet(item: $selectedSession) { session in
+                SessionDetailView(session: session)
+            }
         }
     }
 
@@ -387,6 +393,28 @@ private struct HistoryView: View {
                 .foregroundStyle(Color.gsMuted)
             MiniChart(values: race.feedbackValues, color: .gsGreen)
                 .frame(height: 92)
+            if !race.liveCoachingEvents.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Current race · \(race.liveCoachingEvents.count) events recorded")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.gsMuted)
+                    ForEach(race.liveCoachingEvents.suffix(4)) { event in
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(event.severity.color)
+                                .frame(width: 6, height: 6)
+                            Text("\(event.second / 60):\(String(format: "%02d", event.second % 60))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Color.gsMuted)
+                                .frame(width: 34, alignment: .leading)
+                            Text(event.agentName)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(event.severity.color)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
         }
         .panelStyle()
     }
@@ -479,14 +507,31 @@ private final class RaceViewModel: ObservableObject {
         tool: "Snapshot Builder"
     )
     @Published var agentVotes: [AgentVote] = []
+    @Published var liveCoachingEvents: [LiveCoachingEvent] = []
     @Published var mapPosition: MapCameraPosition
     @Published var route: [TelemetryPoint]
     @Published var isRouteSnapped = false
 
     let sessions: [PastSession]
-    let feedbackValues: [Double] = [0.42, 0.48, 0.55, 0.58, 0.66, 0.71, 0.75, 0.78]
+
+    var feedbackValues: [Double] {
+        guard liveCoachingEvents.count >= 2 else {
+            return [0.42, 0.48, 0.55, 0.58, 0.66, 0.71, 0.75, 0.78]
+        }
+        return liveCoachingEvents.suffix(8).enumerated().map { index, event in
+            let base = 0.30 + Double(index) * 0.09
+            switch event.severity {
+            case .push:    return min(1.0, base + 0.12)
+            case .hold:    return min(1.0, base + 0.04)
+            case .recover: return min(1.0, base + 0.07)
+            case .danger:  return max(0.10, base - 0.05)
+            case .info:    return min(1.0, base + 0.02)
+            }
+        }
+    }
 
     private let orchestrator = AgentOrchestrator()
+    private let speechSynthesizer = AVSpeechSynthesizer()
     private var currentMapRegion: MKCoordinateRegion
     private var lastDecisionSecond = 0
     private var userAdjustedMap = false
@@ -639,6 +684,8 @@ private final class RaceViewModel: ObservableObject {
         elapsedSeconds = 0
         lastDecisionSecond = 0
         userAdjustedMap = false
+        liveCoachingEvents = []
+        speechSynthesizer.stopSpeaking(at: .word)
         currentDecision = StrategyDecision(
             text: "Ready. Start the demo race to stream telemetry and generate tactical coaching.",
             severity: .info,
@@ -728,7 +775,23 @@ private final class RaceViewModel: ObservableObject {
         )
         let (decision, votes) = orchestrator.decide(state)
         agentVotes = votes
+        liveCoachingEvents.append(LiveCoachingEvent(
+            second: elapsedSeconds,
+            agentName: decision.tool,
+            severity: decision.severity,
+            instruction: decision.text
+        ))
+        speak(decision.text)
         return decision
+    }
+
+    private func speak(_ text: String) {
+        speechSynthesizer.stopSpeaking(at: .word)
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.rate = 0.50
+        utterance.pitchMultiplier = 1.05
+        utterance.volume = 0.85
+        speechSynthesizer.speak(utterance)
     }
 }
 
@@ -924,6 +987,22 @@ private enum DecisionSeverity {
     }
 }
 
+private struct CoachingEventRecord: Identifiable {
+    let id = UUID()
+    let elapsed: String
+    let agentName: String
+    let severity: DecisionSeverity
+    let instruction: String
+}
+
+private struct LiveCoachingEvent: Identifiable {
+    let id = UUID()
+    let second: Int
+    let agentName: String
+    let severity: DecisionSeverity
+    let instruction: String
+}
+
 private struct PastSession: Identifiable {
     let id = UUID()
     let title: String
@@ -939,6 +1018,7 @@ private struct PastSession: Identifiable {
     let rawPoints: Int
     let smoothedPoints: Int
     let packetLossEvents: Int
+    let coachingEvents: [CoachingEventRecord]
 }
 
 private enum DemoRouteBuilder {
@@ -1039,7 +1119,15 @@ private enum DemoRouteBuilder {
                 ],
                 rawPoints: 1448,
                 smoothedPoints: 1445,
-                packetLossEvents: 1
+                packetLossEvents: 1,
+                coachingEvents: [
+                    CoachingEventRecord(elapsed: "3:12", agentName: "Upcoming Elevation Scan", severity: .push, instruction: "Climb ahead. Increase cadence now, then hold form over the top."),
+                    CoachingEventRecord(elapsed: "8:45", agentName: "Bio-Guard", severity: .danger, instruction: "Bio-Guard: ease off now. Drop effort for 45 seconds and let heart rate settle."),
+                    CoachingEventRecord(elapsed: "12:04", agentName: "Dynamic Pacer", severity: .push, instruction: "The ghost is opening the gap. Add a controlled 20-second surge."),
+                    CoachingEventRecord(elapsed: "15:30", agentName: "Dynamic Pacer", severity: .push, instruction: "The ghost is opening the gap. Add a controlled 20-second surge."),
+                    CoachingEventRecord(elapsed: "18:22", agentName: "Heart Rate Analysis", severity: .recover, instruction: "Hold this effort. You are near threshold — protect breathing rhythm."),
+                    CoachingEventRecord(elapsed: "21:50", agentName: "Dynamic Pacer", severity: .push, instruction: "Final push. The ghost is within 12 seconds — lift cadence and hold.")
+                ]
             ),
             PastSession(
                 title: "Guadalupe River Ride",
@@ -1059,7 +1147,14 @@ private enum DemoRouteBuilder {
                 ],
                 rawPoints: 2081,
                 smoothedPoints: 2074,
-                packetLossEvents: 2
+                packetLossEvents: 2,
+                coachingEvents: [
+                    CoachingEventRecord(elapsed: "5:20", agentName: "Terrain and Weather Analyst", severity: .hold, instruction: "Headwind detected. Stay smooth and maintain steady effort — don't fight the wind."),
+                    CoachingEventRecord(elapsed: "11:08", agentName: "Dynamic Pacer", severity: .push, instruction: "The ghost is opening the gap. Add a controlled 20-second surge."),
+                    CoachingEventRecord(elapsed: "18:44", agentName: "Dynamic Pacer", severity: .push, instruction: "Tailwind return leg. The ghost is within reach — lift the pace."),
+                    CoachingEventRecord(elapsed: "28:15", agentName: "Heart Rate Analysis", severity: .recover, instruction: "Hold this effort. You are near threshold — protect breathing rhythm."),
+                    CoachingEventRecord(elapsed: "32:02", agentName: "Predict Finish Time", severity: .hold, instruction: "Good position. Stay relaxed and keep the ghost within five seconds.")
+                ]
             )
         ]
     }
@@ -1570,6 +1665,129 @@ private extension Color {
     static let gsOrange = Color(red: 1.00, green: 0.61, blue: 0.24)
     static let gsRed = Color(red: 1.00, green: 0.26, blue: 0.32)
     static let gsPurple = Color(red: 0.68, green: 0.50, blue: 1.00)
+}
+
+private struct SessionDetailView: View {
+    let session: PastSession
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    statsGrid
+                    chartSection
+                    if !session.coachingEvents.isEmpty {
+                        coachingEventsSection
+                    }
+                    narrativeSection
+                    pipelineSection
+                }
+                .padding(16)
+            }
+            .background(Color.gsBackground)
+            .navigationTitle(session.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.gsBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Color.gsGreen)
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var statsGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            CompactMetric(label: "Distance", value: session.distance)
+            CompactMetric(label: "Time", value: session.time)
+            CompactMetric(label: "Avg Pace", value: session.avgPace)
+            CompactMetric(label: "Avg HR", value: session.avgHR)
+            CompactMetric(label: "Data Quality", value: session.quality)
+            CompactMetric(label: "Packet Loss", value: "\(session.packetLossEvents) events")
+        }
+    }
+
+    private var chartSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "Pace Over Time", icon: "waveform.path.ecg")
+            MiniChart(values: session.chart, color: session.mode == .running ? .gsGreen : .gsBlue)
+                .frame(height: 92)
+        }
+        .panelStyle()
+    }
+
+    private var coachingEventsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "Agent Coaching Events", icon: "brain.head.profile")
+            ForEach(session.coachingEvents) { event in
+                HStack(alignment: .top, spacing: 12) {
+                    Circle()
+                        .fill(event.severity.color)
+                        .frame(width: 8, height: 8)
+                        .padding(.top, 5)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(event.elapsed)
+                                .font(.caption2.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(Color.gsMuted)
+                            Text("·")
+                                .foregroundStyle(Color.gsMuted)
+                            Text(event.agentName)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(event.severity.color)
+                                .lineLimit(1)
+                        }
+                        Text(event.instruction)
+                            .font(.caption)
+                            .foregroundStyle(Color.gsText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .panelStyle()
+    }
+
+    private var narrativeSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "Race Narrative", icon: "text.quote")
+            ForEach(session.narrative, id: \.self) { line in
+                HStack(alignment: .top, spacing: 8) {
+                    Text("·")
+                        .foregroundStyle(Color.gsGreen)
+                        .fontWeight(.bold)
+                    Text(line)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.gsMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .panelStyle()
+    }
+
+    private var pipelineSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "Data Pipeline", icon: "waveform.path")
+            Text("GPS telemetry passes through EMA smoothing (α = 0.3), outlier filtering (accuracy > 50 m), and gap interpolation before analytics.")
+                .font(.caption)
+                .foregroundStyle(Color.gsMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                PipelineTile(label: "Raw points", value: "\(session.rawPoints)")
+                PipelineTile(label: "After smoothing", value: "\(session.smoothedPoints)")
+                PipelineTile(label: "Outliers removed", value: "\(session.rawPoints - session.smoothedPoints)")
+                PipelineTile(label: "Packet loss events", value: "\(session.packetLossEvents)")
+            }
+        }
+        .panelStyle()
+    }
 }
 
 struct ContentView_Previews: PreviewProvider {
