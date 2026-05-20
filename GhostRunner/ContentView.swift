@@ -10,28 +10,25 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var race = RaceViewModel()
+    @State private var selectedTab = 0
 
     var body: some View {
-        TabView {
-            DashboardView(race: race)
-                .tabItem {
-                    Label("Home", systemImage: "gauge.with.dots.needle.bottom.50percent")
-                }
+        TabView(selection: $selectedTab) {
+            DashboardView(race: race, selectedTab: $selectedTab)
+                .tabItem { Label("Home", systemImage: "gauge.with.dots.needle.bottom.50percent") }
+                .tag(0)
 
             LiveRaceView(race: race)
-                .tabItem {
-                    Label("Race", systemImage: "figure.run.circle")
-                }
+                .tabItem { Label("Race", systemImage: "figure.run.circle") }
+                .tag(1)
 
             RecordView(race: race)
-                .tabItem {
-                    Label("Record", systemImage: "record.circle")
-                }
+                .tabItem { Label("Record", systemImage: "record.circle") }
+                .tag(2)
 
-            HistoryView(race: race)
-                .tabItem {
-                    Label("History", systemImage: "chart.xyaxis.line")
-                }
+            HistoryView(race: race, selectedTab: $selectedTab)
+                .tabItem { Label("History", systemImage: "chart.xyaxis.line") }
+                .tag(3)
         }
         .tint(.gsGreen)
         .preferredColorScheme(.dark)
@@ -42,6 +39,7 @@ struct ContentView: View {
 
 private struct DashboardView: View {
     @ObservedObject var race: RaceViewModel
+    @Binding var selectedTab: Int
 
     var body: some View {
         NavigationStack {
@@ -130,6 +128,7 @@ private struct DashboardView: View {
                 Button {
                     race.reset()
                     race.startRace()
+                    selectedTab = 1
                 } label: {
                     Label("Start Demo Race", systemImage: "figure.run")
                         .frame(maxWidth: .infinity)
@@ -350,6 +349,7 @@ private struct LiveRaceView: View {
 
 private struct HistoryView: View {
     @ObservedObject var race: RaceViewModel
+    @Binding var selectedTab: Int
     @State private var selectedSession: PastSession? = nil
 
     var body: some View {
@@ -371,7 +371,7 @@ private struct HistoryView: View {
             .toolbarBackground(Color.gsBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .sheet(item: $selectedSession) { session in
-                SessionDetailView(session: session)
+                SessionDetailView(session: session, race: race, selectedTab: $selectedTab)
             }
         }
     }
@@ -566,6 +566,14 @@ private final class RaceViewModel: ObservableObject {
 
     func addSession(_ session: PastSession) {
         sessions.insert(session, at: 0)
+    }
+
+    func raceAgainst(_ session: PastSession) {
+        reset()
+        if !session.route.isEmpty {
+            route = session.route
+        }
+        startRace()
     }
     private var currentMapRegion: MKCoordinateRegion
     private var lastDecisionSecond = 0
@@ -1067,6 +1075,7 @@ private struct PastSession: Identifiable {
     let smoothedPoints: Int
     let packetLossEvents: Int
     let coachingEvents: [CoachingEventRecord]
+    let route: [TelemetryPoint]
 }
 
 private enum DemoRouteBuilder {
@@ -1148,7 +1157,8 @@ private enum DemoRouteBuilder {
     }
 
     static func makeSessions() -> [PastSession] {
-        [
+        let demoRoute = makeFallbackRoute()
+        return [
             PastSession(
                 title: "Campus Loop Personal Best",
                 mode: .running,
@@ -1175,7 +1185,8 @@ private enum DemoRouteBuilder {
                     CoachingEventRecord(elapsed: "15:30", agentName: "Dynamic Pacer", severity: .push, instruction: "The ghost is opening the gap. Add a controlled 20-second surge."),
                     CoachingEventRecord(elapsed: "18:22", agentName: "Heart Rate Analysis", severity: .recover, instruction: "Hold this effort. You are near threshold — protect breathing rhythm."),
                     CoachingEventRecord(elapsed: "21:50", agentName: "Dynamic Pacer", severity: .push, instruction: "Final push. The ghost is within 12 seconds — lift cadence and hold.")
-                ]
+                ],
+                route: demoRoute
             ),
             PastSession(
                 title: "Guadalupe River Ride",
@@ -1202,7 +1213,8 @@ private enum DemoRouteBuilder {
                     CoachingEventRecord(elapsed: "18:44", agentName: "Dynamic Pacer", severity: .push, instruction: "Tailwind return leg. The ghost is within reach — lift the pace."),
                     CoachingEventRecord(elapsed: "28:15", agentName: "Heart Rate Analysis", severity: .recover, instruction: "Hold this effort. You are near threshold — protect breathing rhythm."),
                     CoachingEventRecord(elapsed: "32:02", agentName: "Predict Finish Time", severity: .hold, instruction: "Good position. Stay relaxed and keep the ghost within five seconds.")
-                ]
+                ],
+                route: demoRoute
             )
         ]
     }
@@ -1806,6 +1818,9 @@ private final class RecordingManager: NSObject, ObservableObject, CLLocationMana
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, h:mm a"
         let title = "\(mode.rawValue) · \(formatter.string(from: Date()))"
+        let sessionRoute = recordedLocations.count > 2
+            ? buildTelemetryRoute(from: recordedLocations)
+            : DemoRouteBuilder.makeFallbackRoute()
         return PastSession(
             title: title,
             mode: mode,
@@ -1820,8 +1835,27 @@ private final class RecordingManager: NSObject, ObservableObject, CLLocationMana
             rawPoints: rawCount,
             smoothedPoints: smoothedCount,
             packetLossEvents: packetLoss,
-            coachingEvents: []
+            coachingEvents: [],
+            route: sessionRoute
         )
+    }
+
+    private func buildTelemetryRoute(from locations: [CLLocation]) -> [TelemetryPoint] {
+        var cumDistance = 0.0
+        return locations.enumerated().map { index, loc in
+            if index > 0 {
+                cumDistance += loc.distance(from: locations[index - 1])
+            }
+            let progress = Double(index) / Double(max(1, locations.count - 1))
+            return TelemetryPoint(
+                coordinate: loc.coordinate,
+                distanceMeters: cumDistance,
+                distanceMiles: cumDistance / 1609.344,
+                paceMinutesPerMile: 7.95 - progress * 0.34,
+                elevationFeet: max(0, loc.altitude) * 3.28084,
+                heartRate: 132 + Int(progress * 44.0)
+            )
+        }
     }
 
     private func buildNarrative(miles: Double, avgHR: Int) -> [String] {
@@ -2030,6 +2064,8 @@ private struct RecordView: View {
 
 private struct SessionDetailView: View {
     let session: PastSession
+    @ObservedObject var race: RaceViewModel
+    @Binding var selectedTab: Int
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -2043,6 +2079,7 @@ private struct SessionDetailView: View {
                     }
                     narrativeSection
                     pipelineSection
+                    raceButton
                 }
                 .padding(16)
             }
@@ -2131,6 +2168,20 @@ private struct SessionDetailView: View {
             }
         }
         .panelStyle()
+    }
+
+    private var raceButton: some View {
+        Button {
+            dismiss()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                race.raceAgainst(session)
+                selectedTab = 1
+            }
+        } label: {
+            Label("Race This Ghost", systemImage: "figure.run.circle.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PrimaryButtonStyle())
     }
 
     private var pipelineSection: some View {
