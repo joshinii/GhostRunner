@@ -358,8 +358,16 @@ private struct HistoryView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     summary
                     ForEach(race.sessions) { session in
-                        SessionCard(session: session)
-                            .onTapGesture { selectedSession = session }
+                        SessionCard(
+                            session: session,
+                            onRace: {
+                                race.raceAgainst(session)
+                                selectedTab = 1
+                            },
+                            onDetails: {
+                                selectedSession = session
+                            }
+                        )
                     }
                     dataPipeline
                     feedbackLoop
@@ -1537,6 +1545,8 @@ private struct SnapshotRow: View {
 
 private struct SessionCard: View {
     let session: PastSession
+    var onRace: (() -> Void)? = nil
+    var onDetails: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1594,6 +1604,25 @@ private struct SessionCard: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    onRace?()
+                } label: {
+                    Label("Race This Ghost", systemImage: "figure.run.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryButtonStyle())
+
+                Button {
+                    onDetails?()
+                } label: {
+                    Image(systemName: "chart.bar.xaxis")
+                        .frame(width: 46, height: 46)
+                }
+                .buttonStyle(IconButtonStyle())
+                .accessibilityLabel("View session details")
             }
         }
         .panelStyle()
