@@ -247,7 +247,15 @@ private struct LiveRaceView: View {
             }
             .overlay(alignment: .bottomTrailing) {
             HStack(spacing: 8) {
-                    Label(race.statusText, systemImage: race.isRunning ? "dot.radiowaves.left.and.right" : "pause.circle")
+                Button {
+                    race.toggleMute()
+                } label: {
+                    Image(systemName: race.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(race.isMuted ? Color.gsOrange : Color.gsText)
+                }
+                .buttonStyle(.plain)
+                Label(race.statusText, systemImage: race.isRunning ? "dot.radiowaves.left.and.right" : "pause.circle")
                 Text("1 Hz")
             }
             .font(.caption.weight(.semibold))
@@ -571,6 +579,12 @@ private final class RaceViewModel: ObservableObject {
 
     private let orchestrator = AgentOrchestrator()
     private let speechSynthesizer = AVSpeechSynthesizer()
+    @Published var isMuted = false
+
+    func toggleMute() {
+        isMuted.toggle()
+        if isMuted { speechSynthesizer.stopSpeaking(at: .word) }
+    }
 
     func addSession(_ session: PastSession) {
         sessions.insert(session, at: 0)
@@ -850,6 +864,7 @@ private final class RaceViewModel: ObservableObject {
     }
 
     private func speak(_ text: String) {
+        guard !isMuted else { return }
         speechSynthesizer.stopSpeaking(at: .word)
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = 0.50
