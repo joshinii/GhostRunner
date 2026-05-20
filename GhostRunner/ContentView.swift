@@ -124,7 +124,7 @@ private struct DashboardView: View {
             HStack(spacing: 12) {
                 Button {
                     race.reset()
-                    race.isRunning = true
+                    race.startRace()
                 } label: {
                     Label("Start Demo Race", systemImage: "figure.run")
                         .frame(maxWidth: .infinity)
@@ -192,6 +192,26 @@ private struct LiveRaceView: View {
             .onReceive(tick) { _ in
                 race.tick()
             }
+            .overlay {
+                if race.countdown > 0 {
+                    ZStack {
+                        Color.black.opacity(0.60)
+                            .ignoresSafeArea()
+                        VStack(spacing: 10) {
+                            Text("\(race.countdown)")
+                                .font(.system(size: 130, weight: .black, design: .rounded))
+                                .foregroundStyle(Color.gsGreen)
+                                .shadow(color: Color.gsGreen.opacity(0.55), radius: 28)
+                            Text("GET READY")
+                                .font(.caption.weight(.bold))
+                                .tracking(4)
+                                .foregroundStyle(Color.gsMuted)
+                        }
+                    }
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: race.countdown)
+                }
+            }
         }
     }
 
@@ -243,9 +263,14 @@ private struct LiveRaceView: View {
     private var controlBar: some View {
         HStack(spacing: 12) {
             Button {
-                race.isRunning.toggle()
+                if race.isRunning {
+                    race.isRunning = false
+                } else {
+                    race.startRace()
+                }
             } label: {
-                Label(race.isRunning ? "Pause" : "Start", systemImage: race.isRunning ? "pause.fill" : "play.fill")
+                Label(race.isRunning || race.countdown > 0 ? "Pause" : "Start",
+                      systemImage: race.isRunning || race.countdown > 0 ? "pause.fill" : "play.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(PrimaryButtonStyle())
@@ -499,6 +524,7 @@ private struct BrandLogoView: View {
 @MainActor
 private final class RaceViewModel: ObservableObject {
     @Published var isRunning = false
+    @Published var countdown = 0
     @Published var elapsedSeconds = 0
     @Published var mode: ActivityMode = .running
     @Published var currentDecision = StrategyDecision(
@@ -655,7 +681,19 @@ private final class RaceViewModel: ObservableObject {
         agentVotes.filter(\.triggered).count
     }
 
+    func startRace() {
+        guard !isRunning && countdown == 0 else { return }
+        countdown = 3
+    }
+
     func tick() {
+        if countdown > 0 {
+            countdown -= 1
+            if countdown == 0 {
+                isRunning = true
+            }
+            return
+        }
         guard isRunning else { return }
         elapsedSeconds += 1
 
@@ -681,6 +719,7 @@ private final class RaceViewModel: ObservableObject {
 
     func reset() {
         isRunning = false
+        countdown = 0
         elapsedSeconds = 0
         lastDecisionSecond = 0
         userAdjustedMap = false
