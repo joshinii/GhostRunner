@@ -23,6 +23,11 @@ struct ContentView: View {
                     Label("Race", systemImage: "figure.run.circle")
                 }
 
+            RecordView(race: race)
+                .tabItem {
+                    Label("Record", systemImage: "record.circle")
+                }
+
             HistoryView(race: race)
                 .tabItem {
                     Label("History", systemImage: "chart.xyaxis.line")
@@ -538,7 +543,7 @@ private final class RaceViewModel: ObservableObject {
     @Published var route: [TelemetryPoint]
     @Published var isRouteSnapped = false
 
-    let sessions: [PastSession]
+    @Published var sessions: [PastSession]
 
     var feedbackValues: [Double] {
         guard liveCoachingEvents.count >= 2 else {
@@ -558,6 +563,10 @@ private final class RaceViewModel: ObservableObject {
 
     private let orchestrator = AgentOrchestrator()
     private let speechSynthesizer = AVSpeechSynthesizer()
+
+    func addSession(_ session: PastSession) {
+        sessions.insert(session, at: 0)
+    }
     private var currentMapRegion: MKCoordinateRegion
     private var lastDecisionSecond = 0
     private var userAdjustedMap = false
@@ -1704,6 +1713,314 @@ private extension Color {
     static let gsOrange = Color(red: 1.00, green: 0.61, blue: 0.24)
     static let gsRed = Color(red: 1.00, green: 0.26, blue: 0.32)
     static let gsPurple = Color(red: 0.68, green: 0.50, blue: 1.00)
+}
+
+// MARK: - Recording
+
+@MainActor
+private final class RecordingManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+    @Published var isRecording = false
+    @Published var isSaved = false
+    @Published var recordedLocations: [CLLocation] = []
+    @Published var elapsedSeconds = 0
+    @Published var simulatedHR = 120
+    @Published var mapPosition: MapCameraPosition = .automatic
+    @Published var authStatus: CLAuthorizationStatus = .notDetermined
+
+    private let locationManager = CLLocationManager()
+    private var timerCancellable: AnyCancellable?
+
+    override init() {
+        super.init()
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = 5
+        authStatus = locationManager.authorizationStatus
+    }
+
+    var distanceMeters: Double {
+        guard recordedLocations.count > 1 else { return 0 }
+        return zip(recordedLocations, recordedLocations.dropFirst())
+            .reduce(0) { $0 + $1.1.distance(from: $1.0) }
+    }
+
+    var paceText: String {
+        let miles = distanceMeters / 1609.344
+        guard miles > 0.05, elapsedSeconds > 10 else { return "--:--" }
+        let pace = Double(elapsedSeconds) / 60.0 / miles
+        return "\(Int(pace)):\(String(format: "%02d", Int((pace - floor(pace)) * 60)))"
+    }
+
+    var elapsedText: String {
+        "\(elapsedSeconds / 60):\(String(format: "%02d", elapsedSeconds % 60))"
+    }
+
+    var coordinates: [CLLocationCoordinate2D] {
+        recordedLocations.map(\.coordinate)
+    }
+
+    func requestPermission() {
+        locationManager.requestWhenInUseAuthorization()
+    }
+
+    func startRecording() {
+        recordedLocations = []
+        elapsedSeconds = 0
+        simulatedHR = 128
+        isSaved = false
+        isRecording = true
+        locationManager.startUpdatingLocation()
+        timerCancellable = Timer.publish(every: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self, self.isRecording else { return }
+                self.elapsedSeconds += 1
+                let progress = min(1.0, Double(self.elapsedSeconds) / 1800.0)
+                self.simulatedHR = 128 + Int(progress * 52) + Int.random(in: -3...3)
+            }
+    }
+
+    func stopRecording() {
+        isRecording = false
+        locationManager.stopUpdatingLocation()
+        timerCancellable?.cancel()
+        timerCancellable = nil
+    }
+
+    func buildSession(mode: ActivityMode) -> PastSession? {
+        guard recordedLocations.count > 5 else { return nil }
+        let miles = distanceMeters / 1609.344
+        let pace = miles > 0 ? Double(elapsedSeconds) / 60.0 / miles : 0
+        let smoothedCount = recordedLocations.filter { $0.horizontalAccuracy < 50 }.count
+        let outliers = recordedLocations.count - smoothedCount
+        let packetLoss = Int.random(in: 0...min(3, recordedLocations.count / 100))
+        let step = max(1, recordedLocations.count / 8)
+        let chart = stride(from: 0, to: recordedLocations.count, by: step).map { i in
+            0.4 + Double(i) / Double(recordedLocations.count) * 0.45
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, h:mm a"
+        let title = "\(mode.rawValue) · \(formatter.string(from: Date()))"
+        return PastSession(
+            title: title,
+            mode: mode,
+            distance: String(format: "%.2f mi", miles),
+            time: elapsedText,
+            avgPace: "\(Int(pace)):\(String(format: "%02d", Int((pace - floor(pace)) * 60))) /mi",
+            avgHR: "\(simulatedHR) bpm",
+            quality: outliers == 0 ? "98%" : "\(max(70, 98 - outliers * 2))%",
+            notes: "Recorded \(formatter.string(from: Date())) · \(recordedLocations.count) GPS points captured",
+            chart: chart,
+            narrative: buildNarrative(miles: miles, avgHR: simulatedHR),
+            rawPoints: recordedLocations.count,
+            smoothedPoints: smoothedCount,
+            packetLossEvents: packetLoss,
+            coachingEvents: []
+        )
+    }
+
+    private func buildNarrative(miles: Double, avgHR: Int) -> [String] {
+        var lines: [String] = []
+        let pace = miles > 0 ? Double(elapsedSeconds) / 60.0 / miles : 0
+        lines.append(String(format: "Recorded %.2f miles in %d:%02d at %d:%02d avg pace.",
+            miles, elapsedSeconds / 60, elapsedSeconds % 60, Int(pace), Int((pace - floor(pace)) * 60)))
+        if avgHR > 173 {
+            lines.append("Heart rate reached the Bio-Guard zone (>173 bpm) — high-intensity effort logged.")
+        } else if avgHR > 155 {
+            lines.append("Heart rate held in the threshold zone — strong aerobic effort throughout.")
+        } else {
+            lines.append("Heart rate stayed in the aerobic zone — solid steady-state effort.")
+        }
+        lines.append("Session saved to History and ready to use as a ghost for future races.")
+        return lines
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last, location.horizontalAccuracy >= 0 else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.isRecording else { return }
+            if location.horizontalAccuracy < 50 {
+                self.recordedLocations.append(location)
+            }
+            self.mapPosition = .region(MKCoordinateRegion(
+                center: location.coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
+            ))
+        }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor [weak self] in
+            self?.authStatus = manager.authorizationStatus
+        }
+    }
+}
+
+private struct RecordView: View {
+    @ObservedObject var race: RaceViewModel
+    @StateObject private var recorder = RecordingManager()
+    @State private var mode: ActivityMode = .running
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    mapSection
+                    controlBar
+                    statsGrid
+                    if !recorder.isRecording && recorder.recordedLocations.count > 5 && !recorder.isSaved {
+                        saveButton
+                    }
+                    if recorder.isSaved {
+                        savedBanner
+                    }
+                    if recorder.authStatus == .denied || recorder.authStatus == .restricted {
+                        permissionBanner
+                    }
+                }
+                .padding(16)
+            }
+            .background(Color.gsBackground)
+            .navigationTitle("Record Workout")
+            .toolbarBackground(Color.gsBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .onAppear { recorder.requestPermission() }
+        }
+    }
+
+    private var mapSection: some View {
+        Map(position: $recorder.mapPosition) {
+            if recorder.coordinates.count > 1 {
+                MapPolyline(coordinates: recorder.coordinates)
+                    .stroke(mode == .running ? Color.gsGreen : Color.gsBlue, lineWidth: 5)
+            }
+            if let last = recorder.coordinates.last {
+                Annotation("You", coordinate: last) {
+                    RunnerMarker(color: mode == .running ? .gsGreen : .gsBlue,
+                                 icon: mode == .running ? "figure.run" : "bicycle")
+                }
+            }
+        }
+        .mapStyle(.standard(elevation: .realistic))
+        .frame(height: 300)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(alignment: .bottomTrailing) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(recorder.isRecording ? Color.gsRed : Color.gsMuted)
+                    .frame(width: 8, height: 8)
+                    .opacity(recorder.isRecording ? 1.0 : 0.5)
+                Text(recorder.isRecording ? "Recording  \(recorder.recordedLocations.count) pts" : "Ready")
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Color.gsText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.gsPanel.opacity(0.92))
+            .clipShape(Capsule())
+            .padding(12)
+        }
+    }
+
+    private var controlBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                if recorder.isRecording {
+                    recorder.stopRecording()
+                } else {
+                    recorder.startRecording()
+                }
+            } label: {
+                Label(recorder.isRecording ? "Stop Recording" : "Start Recording",
+                      systemImage: recorder.isRecording ? "stop.fill" : "record.circle.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PrimaryButtonStyle())
+
+            Button {
+                mode = mode == .running ? .cycling : .running
+            } label: {
+                Image(systemName: mode == .running ? "bicycle" : "figure.run")
+                    .frame(width: 46, height: 46)
+            }
+            .buttonStyle(IconButtonStyle())
+            .disabled(recorder.isRecording)
+            .accessibilityLabel("Switch mode")
+        }
+    }
+
+    private var statsGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            StatTile(label: "Elapsed", value: recorder.elapsedText, unit: "",
+                     icon: "timer", color: .gsGreen)
+            StatTile(label: "Distance", value: String(format: "%.2f", recorder.distanceMeters / 1609.344),
+                     unit: "mi", icon: "location.north.line.fill", color: .gsBlue)
+            StatTile(label: "Pace", value: recorder.paceText, unit: "/mi",
+                     icon: "stopwatch.fill", color: .gsOrange)
+            StatTile(label: "Heart rate", value: recorder.isRecording ? "\(recorder.simulatedHR)" : "--",
+                     unit: "bpm", icon: "heart.fill",
+                     color: recorder.simulatedHR > 173 ? .gsRed : .gsPurple)
+            StatTile(label: "GPS points", value: "\(recorder.recordedLocations.count)", unit: "",
+                     icon: "antenna.radiowaves.left.and.right", color: .gsGreen)
+            StatTile(label: "Mode", value: mode.rawValue, unit: "",
+                     icon: mode == .running ? "figure.run" : "bicycle", color: .gsBlue)
+        }
+    }
+
+    private var saveButton: some View {
+        Button {
+            if let session = recorder.buildSession(mode: mode) {
+                race.addSession(session)
+                recorder.isSaved = true
+            }
+        } label: {
+            Label("Save Session to History", systemImage: "square.and.arrow.down.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PrimaryButtonStyle())
+    }
+
+    private var savedBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Color.gsGreen)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Session saved")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.gsText)
+                Text("Visible in the History tab — tap to see details and race it as a ghost.")
+                    .font(.caption)
+                    .foregroundStyle(Color.gsMuted)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gsGreen.opacity(0.10))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .stroke(Color.gsGreen.opacity(0.25), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var permissionBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "location.slash.fill")
+                .foregroundStyle(Color.gsOrange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Location access denied")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.gsText)
+                Text("Enable in Settings → Privacy → Location Services → GhostRunner.")
+                    .font(.caption)
+                    .foregroundStyle(Color.gsMuted)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gsOrange.opacity(0.10))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .stroke(Color.gsOrange.opacity(0.25), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
 }
 
 private struct SessionDetailView: View {
